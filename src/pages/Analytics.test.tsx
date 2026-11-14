@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import Analytics from './Analytics';
 import { db } from '../db/db';
-import { fmtMoney, monthKey, todayISO } from '../lib/format';
+import { fmtMoney, monthKey, todayISO, addMonths } from '../lib/format';
 
 // Each test gets a clean database — fake-indexeddb persists across tests
 // within a run otherwise, which would let state leak between cases.
@@ -15,7 +16,11 @@ beforeEach(async () => {
 });
 
 function renderAnalytics() {
-  return render(<Analytics currency="₹" />);
+  return render(
+    <MemoryRouter>
+      <Analytics currency="₹" />
+    </MemoryRouter>,
+  );
 }
 
 async function makeBracket(kind: 'spend' | 'allocation' | 'income', name = 'Expenditure') {
@@ -116,7 +121,13 @@ describe('Analytics — "Month" range can step back to browse a closed past mont
     expect(await screen.findByRole('button', { name: 'Next month' })).toBeDisabled();
   });
 
+  async function seedPrevMonthEntry() {
+    const prev = addMonths(monthKey(todayISO()), -1);
+    await db.transactions.add({ type: 'expense', amount: 100, categoryId: 1, date: `${prev}-10`, createdAt: 0 });
+  }
+
   it('the "Next month" arrow re-enables after stepping back, and stepping forward again returns to the current month', async () => {
+    await seedPrevMonthEntry();
     const { default: userEvent } = await import('@testing-library/user-event');
     const user = userEvent.setup();
     renderAnalytics();
@@ -129,6 +140,7 @@ describe('Analytics — "Month" range can step back to browse a closed past mont
   });
 
   it('switching to a different range and back to "Month" resets to the current month, not a stale stepped-back one', async () => {
+    await seedPrevMonthEntry();
     const { default: userEvent } = await import('@testing-library/user-event');
     const user = userEvent.setup();
     renderAnalytics();
@@ -268,6 +280,7 @@ describe('Analytics — vs. last month', () => {
     await seedMonths();
     renderAnalytics();
     await screen.findByText(/^Vs\. September 2026/);
+    await waitFor(() => expect(screen.getByLabelText('Previous month')).toBeEnabled());
     fireEvent.click(screen.getByLabelText('Previous month'));
 
     const card = (await screen.findByText(/^Vs\. August 2026/)).closest('.card') as HTMLElement;
@@ -285,5 +298,79 @@ describe('Analytics — vs. last month', () => {
     renderAnalytics();
     await screen.findAllByText('Food');
     expect(screen.queryByText(/^Vs\./)).not.toBeInTheDocument();
+  });
+});
+
+
+describe('Analytics — whole-month picture and logged months only', () => {
+  it('only offers months that have entries: no earlier month when logging started this month', async () => {
+    const bracketId = await makeBracket('spend');
+    const food = await db.categories.add({ name: 'Food', icon: '🍲', color: '#6FC98A', budget: 1, bracketId });
+    await db.transactions.add({ type: 'expense', amount: 90, categoryId: food, date: `${monthKey(todayISO())}-03`, createdAt: 0 });
+    renderAnalytics();
+    await screen.findAllByText(fmtMoney(90, '₹'));
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  });
+
+  it('skips empty months when stepping back', async () => {
+    const cur = monthKey(todayISO());
+    const bracketId = await makeBracket('spend');
+    const food = await db.categories.add({ name: 'Food', icon: '🍲', color: '#6FC98A', budget: 1, bracketId });
+    await db.transactions.add({ type: 'expense', amount: 90, categoryId: food, date: `${cur}-03`, createdAt: 0 });
+    await db.transactions.add({ type: 'expense', amount: 4321, categoryId: food, date: `${addMonths(cur, -3)}-03`, createdAt: 0 });
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    renderAnalytics();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Previous month' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Previous month' }));
+    expect((await screen.findAllByText(fmtMoney(4321, '₹'))).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+  });
+
+  it('snapshot covers income, spend, savings and what is left', async () => {
+    const cur = monthKey(todayISO());
+    const spend = await makeBracket('spend');
+    const save = await makeBracket('allocation', 'Savings');
+    const inc = await makeBracket('income', 'Income');
+    const food = await db.categories.add({ name: 'Food', icon: '🍲', color: '#6FC98A', budget: 1, bracketId: spend });
+    const fund = await db.categories.add({ name: 'Fund', icon: '🛟', color: '#4FD9B8', budget: 1, bracketId: save });
+    const salary = await db.categories.add({ name: 'Salary', icon: '💼', color: '#7C93F0', budget: 0, bracketId: inc });
+    await db.transactions.add({ type: 'income', amount: 50000, categoryId: salary, date: `${cur}-01`, createdAt: 0 });
+    await db.transactions.add({ type: 'expense', amount: 12000, categoryId: food, date: `${cur}-02`, createdAt: 0 });
+    await db.transactions.add({ type: 'expense', amount: 8000, categoryId: fund, date: `${cur}-03`, createdAt: 0 });
+    renderAnalytics();
+    const card = (await screen.findByTestId('month-snapshot'));
+    expect(within(card).getByText(fmtMoney(50000, '₹'))).toBeInTheDocument();
+    expect(within(card).getAllByText(fmtMoney(12000, '₹')).length).toBeGreaterThan(0);
+    expect(within(card).getAllByText(fmtMoney(8000, '₹')).length).toBeGreaterThan(0);
+    expect(within(card).getByText(fmtMoney(30000, '₹'))).toBeInTheDocument(); // left over
+  });
+});
+
+
+describe('Analytics — snapshot blocks open their entries', () => {
+  function Where() {
+    const l = useLocation();
+    return <div data-testid="where">{l.pathname + l.search}</div>;
+  }
+  it('tapping Income opens History for that month filtered to income; Left over is not tappable', async () => {
+    const cur = monthKey(todayISO());
+    const inc = await makeBracket('income', 'Income');
+    const salary = await db.categories.add({ name: 'Salary', icon: '💼', color: '#7C93F0', budget: 0, bracketId: inc });
+    await db.transactions.add({ type: 'income', amount: 40000, categoryId: salary, date: `${cur}-01`, createdAt: 0 });
+    const { default: userEvent } = await import('@testing-library/user-event');
+    render(
+      <MemoryRouter initialEntries={['/analytics']}>
+        <Routes>
+          <Route path="/analytics" element={<Analytics currency="₹" />} />
+          <Route path="/history" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const card = await screen.findByTestId('month-snapshot');
+    expect(within(card).queryByRole('button', { name: /Left over/ })).not.toBeInTheDocument();
+    await userEvent.setup().click(within(card).getByRole('button', { name: /^Income/ }));
+    expect(await screen.findByTestId('where')).toHaveTextContent(`/history?month=${cur}&kind=income`);
   });
 });

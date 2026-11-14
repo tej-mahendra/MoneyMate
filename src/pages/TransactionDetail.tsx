@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useParams } from "react-router-dom";
 import { db } from "../db/db";
-import { fmtMoney, longDate, fmtDateTime, iconBadgeStyle } from "../lib/format";
+import { fmtMoney, longDate, fmtDateTime, iconBadgeStyle, monthLabel, todayISO } from "../lib/format";
 import { useUIStore } from "../store/useUIStore";
 import { ChevronLeft, Pencil, Trash2, Repeat, Receipt } from "lucide-react";
 
@@ -19,6 +19,10 @@ export default function TransactionDetail({ currency }: { currency: string }) {
     () => (t ? db.categories.get(t.categoryId) : undefined),
     [t?.categoryId],
   );
+  const bracket = useLiveQuery(
+    () => (category ? db.brackets.get(category.bracketId) : undefined),
+    [category?.bracketId],
+  );
   const recurring = useLiveQuery(
     () => (t?.recurringId ? db.recurring.get(t.recurringId) : undefined),
     [t?.recurringId],
@@ -28,7 +32,10 @@ export default function TransactionDetail({ currency }: { currency: string }) {
     if (!t) return;
      const confirmed = await showConfirm({
        title: "Delete transaction?",
-       message: "This can't be undone.",
+       message:
+         t.date.slice(0, 7) < todayISO().slice(0, 7)
+           ? `This can't be undone, and it changes ${monthLabel(t.date.slice(0, 7))}'s totals.`
+           : "This can't be undone.",
        confirmLabel: "Delete",
        cancelLabel: "Keep it",
        danger: true,
@@ -103,6 +110,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
   }
 
   const isIncome = t.type === "income";
+  const isSavings = !isIncome && bracket?.kind === "allocation";
 
   return (
     <>
@@ -125,7 +133,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
           <div>
             <div className="eyebrow">Transaction</div>
             <h1 style={{ fontSize: 20 }}>
-              {isIncome ? "Income" : "Expense"} details
+              {isIncome ? "Income" : isSavings ? "Savings" : "Expense"} details
             </h1>
           </div>
         </div>

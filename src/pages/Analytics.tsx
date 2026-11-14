@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
+import { useNavigate } from "react-router-dom";
 import { db } from "../db/db";
+import { adjacentMonth, loggedMonthsFromDates } from "../lib/loggedMonths";
+import { buildSnapshot } from "../lib/monthSnapshot";
+import MonthSnapshotCard from "../components/MonthSnapshotCard";
 import {
   fmtMoney,
   monthKey,
@@ -150,6 +154,7 @@ const SERIES_COLORS = [
 ];
 
 export default function Analytics({ currency }: { currency: string }) {
+  const navigate = useNavigate();
   const [range, setRange] = useState<Range>("month");
   const txs = useLiveQuery(() => db.transactions.toArray(), []) ?? EMPTY_LIST;
   const categories = useLiveQuery(() => db.categories.toArray(), []) ?? EMPTY_LIST;
@@ -173,13 +178,19 @@ export default function Analytics({ currency }: { currency: string }) {
   );
   const todayMonth = monthKey(todayISO());
   // Only meaningful when range === "month" — for every other range (3m,
-  // 6m, 1y, all) the window still trails back from today, same as before.
-  // Every existing calculation below already derives from this single
-  // `curMonth` value, so this is the only change needed to let "Month"
-  // browse any past month's isolated snapshot instead of always meaning
-  // "today's month" with no way to step back to a closed one.
-  const [monthOffset, setMonthOffset] = useState(0);
-  const curMonth = range === "month" ? addMonths(todayMonth, monthOffset) : todayMonth;
+  // 6m, 1y, all) the window still trails back from today. The stepper walks
+  // only months that have something logged, so if logging began in November
+  // there is no October to step into.
+  const loggedMonths = useMemo(
+    () => loggedMonthsFromDates(txs.map((t) => t.date), todayMonth),
+    [txs, todayMonth],
+  );
+  const [pickedMonth, setPickedMonth] = useState<string | null>(null);
+  const monthView =
+    pickedMonth && loggedMonths.includes(pickedMonth) ? pickedMonth : todayMonth;
+  const curMonth = range === "month" ? monthView : todayMonth;
+  const prevLogged = adjacentMonth(loggedMonths, monthView, -1);
+  const nextLogged = adjacentMonth(loggedMonths, monthView, 1);
 
   const startMonth = useMemo(() => {
     if (range === "all") {
@@ -205,6 +216,12 @@ export default function Analytics({ currency }: { currency: string }) {
         (t) => t.type === "expense" && !allocationCategoryIds.has(t.categoryId),
       ),
     [rangeTx, allocationCategoryIds],
+  );
+
+  // Everything in the period — income, spend and savings — not just spend.
+  const snapshot = useMemo(
+    () => buildSnapshot(rangeTx, categories, brackets),
+    [rangeTx, categories, brackets],
   );
 
   const pieData = useMemo(() => {
@@ -541,7 +558,7 @@ export default function Analytics({ currency }: { currency: string }) {
               className={"chip" + (range === r ? " active" : "")}
               onClick={() => {
                 setRange(r);
-                setMonthOffset(0);
+                setPickedMonth(null);
               }}
             >
               {RANGE_LABEL[r]}
@@ -554,7 +571,8 @@ export default function Analytics({ currency }: { currency: string }) {
             <button
               className="icon-btn"
               aria-label="Previous month"
-              onClick={() => setMonthOffset((o) => o - 1)}
+              disabled={!prevLogged}
+              onClick={() => prevLogged && setPickedMonth(prevLogged)}
             >
               <ChevronLeft size={18} />
             </button>
@@ -564,13 +582,27 @@ export default function Analytics({ currency }: { currency: string }) {
             <button
               className="icon-btn"
               aria-label="Next month"
-              disabled={monthOffset >= 0}
-              onClick={() => setMonthOffset((o) => Math.min(0, o + 1))}
+              disabled={!nextLogged}
+              onClick={() => nextLogged && setPickedMonth(nextLogged)}
             >
               <ChevronRight size={18} />
             </button>
           </div>
         )}
+
+        <MonthSnapshotCard
+          snapshot={snapshot}
+          currency={currency}
+          title="Money snapshot"
+          caption={range === "month" ? monthLabel(curMonth) : RANGE_LABEL[range]}
+          // Blocks open that month's entries in History, filtered to the block.
+          // Only for a single month — History is month-based.
+          onSelect={
+            range === "month"
+              ? (k) => navigate(`/history?month=${curMonth}&kind=${k}`)
+              : undefined
+          }
+        />
 
         <div className="card">
           <h2>At a glance</h2>

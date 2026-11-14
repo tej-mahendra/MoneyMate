@@ -10,10 +10,14 @@ import {
   shortDate,
   todayISO,
   iconBadgeStyle,
+  daysInMonth,
 } from "../lib/format";
+import { loggedMonthsFromDates } from "../lib/loggedMonths";
+import { buildMonthSnapshot, classifyTransaction, type SnapshotKind } from "../lib/monthSnapshot";
+import MonthSnapshotCard from "../components/MonthSnapshotCard";
 import { useUIStore } from "../store/useUIStore";
 import CalendarHeatmap from "../components/CalendarHeatmap";
-import { List, CalendarDays, Inbox, X } from "lucide-react";
+import { List, CalendarDays, Inbox, X, Plus } from "lucide-react";
 import Dropdown from "../components/Dropdown";
 import { useNavigate } from "react-router-dom";
 
@@ -21,12 +25,15 @@ export default function History({ currency }: { currency: string }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const showToast = useUIStore((s) => s.showToast);
+  const showConfirm = useUIStore((s) => s.showConfirm);
   const allTx = useLiveQuery(() => db.transactions.toArray(), []) ?? EMPTY_LIST;
   const categories = useLiveQuery(() => db.categories.toArray(), []) ?? EMPTY_LIST;
+  const brackets = useLiveQuery(() => db.brackets.toArray(), []) ?? EMPTY_LIST;
   const catMap = new Map(categories.map((c) => [c.id, c]));
+  const curMonth = monthKey(todayISO());
 
   const requestedMonth = params.get("month");
-  const [month, setMonth] = useState(
+  const [selectedMonth, setMonth] = useState(
     requestedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)
       ? requestedMonth
       : monthKey(todayISO()),
@@ -35,18 +42,26 @@ export default function History({ currency }: { currency: string }) {
   const [view, setView] = useState<"list" | "calendar">("list");
   const [dayFilter, setDayFilter] = useState<string | null>(null);
   const catFilter = params.get("cat") ? Number(params.get("cat")) : null;
+  const kindParam = params.get("kind");
+  const kindFilter: SnapshotKind | null =
+    kindParam === "income" || kindParam === "spent" || kindParam === "saved" ? kindParam : null;
   const [lastDeleted, setLastDeleted] = useState<{ transaction: Transaction; shares: SplitShare[] } | null>(null);
 
-  const months = useMemo(() => {
-    const set = new Set(allTx.map((t) => monthKey(t.date)));
-    set.add(monthKey(todayISO()));
-    return Array.from(set).sort().reverse();
-  }, [allTx]);
+  // Only months that have something logged (plus the current one), newest
+  // first — months before logging began never appear.
+  const months = useMemo(
+    () => loggedMonthsFromDates(allTx.map((t) => t.date), curMonth).reverse(),
+    [allTx, curMonth],
+  );
+  // If the selected month has since emptied (its last entry was deleted),
+  // fall back to the newest logged month instead of showing a ghost month.
+  const month = months.includes(selectedMonth) ? selectedMonth : months[0];
 
   const filtered = allTx
     .filter((t) => monthKey(t.date) === month)
     .filter((t) => (catFilter ? t.categoryId === catFilter : true))
     .filter((t) => (dayFilter ? t.date === dayFilter : true))
+    .filter((t) => (kindFilter ? classifyTransaction(t, categories, brackets) === kindFilter : true))
     .filter((t) => {
       if (!query.trim()) return true;
       const q = query.toLowerCase();
@@ -65,10 +80,34 @@ export default function History({ currency }: { currency: string }) {
   const monthTotal = filtered
     .filter((t) => t.type === "expense")
     .reduce((s, t) => s + t.amount, 0);
+  const snapshot = buildMonthSnapshot(month, allTx, categories, brackets);
+  const monthHasTx = snapshot.txCount > 0;
+  const isPast = month < curMonth;
 
-  const monthHasTx = allTx.some((t) => monthKey(t.date) === month);
+  // Tapping a snapshot block filters the list below to its entries; tapping
+  // it again clears the filter.
+  function toggleKind(k: SnapshotKind) {
+    const next = new URLSearchParams(params);
+    if (kindFilter === k) next.delete("kind");
+    else next.set("kind", k);
+    setParams(next, { replace: true });
+    setView("list");
+    setDayFilter(null);
+  }
 
   async function del(t: Transaction) {
+    // Closed months are history people rely on — ask first. The current
+    // month stays one-tap with Undo.
+    if (monthKey(t.date) < curMonth) {
+      const ok = await showConfirm({
+        title: "Delete this entry?",
+        message: `It will be removed from ${monthLabel(monthKey(t.date))}'s totals.`,
+        confirmLabel: "Delete",
+        cancelLabel: "Keep it",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     // A split expense's IOU rows point at this transaction — deleting it
     // without them leaves debris that no longer traces back to any real
     // expense. Captured alongside the transaction here so Undo can restore
@@ -142,6 +181,21 @@ export default function History({ currency }: { currency: string }) {
               </span>
             </button>
           </div>
+          {kindFilter && (
+            <div className="chip-row">
+              <button
+                className="chip active"
+                onClick={() => {
+                  const next = new URLSearchParams(params);
+                  next.delete("kind");
+                  setParams(next, { replace: true });
+                }}
+              >
+                {kindFilter === "income" ? "Income" : kindFilter === "saved" ? "Saved & invested" : "Spent"}{" "}
+                <X size={12} style={{ display: "inline", verticalAlign: "middle" }} />
+              </button>
+            </div>
+          )}
           {catFilter && (
             <div className="chip-row">
               <button className="chip active" onClick={() => setParams({})}>
@@ -172,6 +226,29 @@ export default function History({ currency }: { currency: string }) {
             </div>
           )}
         </div>
+
+        {monthHasTx && (
+          <MonthSnapshotCard
+            snapshot={snapshot}
+            currency={currency}
+            title="Month snapshot"
+            caption={monthLabel(month)}
+            onSelect={toggleKind}
+            activeKind={kindFilter}
+          />
+        )}
+
+        {isPast && (
+          <button
+            className="btn small secondary"
+            style={{ marginBottom: 12, width: "100%" }}
+            onClick={() => navigate(`/add?date=${month}-${String(daysInMonth(month)).padStart(2, "0")}`)}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Plus size={14} /> Add entry to {monthLabel(month)}
+            </span>
+          </button>
+        )}
 
         {view === "calendar" && (
           <div className="card">

@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import ConfirmDialog from '../components/ConfirmDialog';
 import History from './History';
 import { db } from '../db/db';
-import { monthKey, todayISO, monthLabel } from '../lib/format';
+import { monthKey, todayISO, monthLabel, addMonths, fmtMoney } from '../lib/format';
 
 beforeEach(async () => {
   await db.transactions.clear();
@@ -166,11 +167,11 @@ describe('History — budget review link', () => {
     expect(await screen.findByText('Budget screen')).toBeInTheDocument();
   });
 
-  it('shows no review link when the month has no transactions, and no longer renders a snapshot card', async () => {
+  it('shows no review link or snapshot when the month has no transactions', async () => {
     renderHistory();
     await screen.findByText('Nothing here yet.');
     expect(screen.queryByText(/budget review/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/snapshot/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('month-snapshot')).not.toBeInTheDocument();
   });
 
   it('opens on the month given in ?month= (deep link from the budget review)', async () => {
@@ -179,5 +180,112 @@ describe('History — budget review link', () => {
     await db.transactions.add({ type: 'expense', amount: 700, categoryId: rentId, date: `${prev}-10`, createdAt: Date.now(), merchant: 'March Landlord' });
     renderHistory(`/history?month=${prev}`);
     expect(await screen.findByText(/March Landlord/)).toBeInTheDocument();
+  });
+});
+
+
+describe('History — whole-month snapshot, logged months, closed-month changes', () => {
+  async function seedMixed(month: string) {
+    const spend = await db.brackets.add({ name: 'Expenditure', icon: '💳', color: '#7C93F0', kind: 'spend' });
+    const save = await db.brackets.add({ name: 'Savings', icon: '💰', color: '#4FD9B8', kind: 'allocation' });
+    const inc = await db.brackets.add({ name: 'Income', icon: '💼', color: '#6FC98A', kind: 'income' });
+    const food = await db.categories.add({ name: 'Food', icon: '🍲', color: '#F0B94D', budget: 0, bracketId: spend });
+    const fund = await db.categories.add({ name: 'Fund', icon: '🛟', color: '#4FD9B8', budget: 0, bracketId: save });
+    const salary = await db.categories.add({ name: 'Salary', icon: '💼', color: '#6FC98A', budget: 0, bracketId: inc });
+    await db.transactions.add({ type: 'income', amount: 60000, categoryId: salary, date: `${month}-01`, createdAt: 1, merchant: 'Employer' });
+    await db.transactions.add({ type: 'expense', amount: 15000, categoryId: food, date: `${month}-02`, createdAt: 2, merchant: 'Grocer' });
+    await db.transactions.add({ type: 'expense', amount: 9000, categoryId: fund, date: `${month}-03`, createdAt: 3, merchant: 'Bank' });
+    return { food, fund, salary };
+  }
+
+  it('the month snapshot shows income, spent, saved and left over — and ignores search filters', async () => {
+    const cur = monthKey(todayISO());
+    await seedMixed(cur);
+    const user = userEvent.setup();
+    renderHistory();
+    const card = await screen.findByTestId('month-snapshot');
+    expect(within(card).getAllByText(fmtMoney(60000, '₹')).length).toBeGreaterThan(0);
+    expect(within(card).getAllByText(fmtMoney(15000, '₹')).length).toBeGreaterThan(0);
+    expect(within(card).getAllByText(fmtMoney(9000, '₹')).length).toBeGreaterThan(0);
+    expect(within(card).getByText(fmtMoney(36000, '₹'))).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('Search…'), 'Grocer');
+    expect(within(screen.getByTestId('month-snapshot')).getAllByText(fmtMoney(60000, '₹')).length).toBeGreaterThan(0);
+  });
+
+  it('the month dropdown lists only months with entries — nothing before logging began', async () => {
+    const cur = monthKey(todayISO());
+    await seedMixed(cur);
+    renderHistory();
+    await screen.findByTestId('month-snapshot');
+    await userEvent.setup().click(screen.getByRole('button', { expanded: false, name: new RegExp(monthLabel(cur)) }));
+    const options = within(await screen.findByRole('listbox')).getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent(monthLabel(cur));
+  });
+
+  it('deleting from a closed month asks first; Keep it leaves the entry alone', async () => {
+    const past = addMonths(monthKey(todayISO()), -2);
+    await seedMixed(past);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={[`/history?month=${past}`]}>
+        <Routes><Route path="/history" element={<History currency="₹" />} /></Routes>
+        <ConfirmDialog />
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Grocer/);
+    await user.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(await db.transactions.count()).toBe(3);
+    await user.click(screen.getByRole('button', { name: 'Keep it' }));
+    expect(await db.transactions.count()).toBe(3);
+
+    await user.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(async () => expect(await db.transactions.count()).toBe(2));
+  });
+
+  it('a closed month offers "Add entry to <month>"', async () => {
+    const past = addMonths(monthKey(todayISO()), -2);
+    await seedMixed(past);
+    renderHistory(`/history?month=${past}`);
+    expect(await screen.findByRole('button', { name: new RegExp(`Add entry to ${monthLabel(past)}`) })).toBeInTheDocument();
+  });
+});
+
+
+describe('History — snapshot blocks filter the list', () => {
+  it('tapping Income / Saved / Spent shows only those entries; tapping again clears it', async () => {
+    const cur = monthKey(todayISO());
+    const spend = await db.brackets.add({ name: 'Expenditure', icon: '💳', color: '#7C93F0', kind: 'spend' });
+    const save = await db.brackets.add({ name: 'Savings', icon: '💰', color: '#4FD9B8', kind: 'allocation' });
+    const inc = await db.brackets.add({ name: 'Income', icon: '💼', color: '#6FC98A', kind: 'income' });
+    const food = await db.categories.add({ name: 'Food', icon: '🍲', color: '#F0B94D', budget: 0, bracketId: spend });
+    const fund = await db.categories.add({ name: 'Fund', icon: '🛟', color: '#4FD9B8', budget: 0, bracketId: save });
+    const salary = await db.categories.add({ name: 'Salary', icon: '💼', color: '#6FC98A', budget: 0, bracketId: inc });
+    await db.transactions.add({ type: 'income', amount: 60000, categoryId: salary, date: `${cur}-01`, createdAt: 1, merchant: 'Employer' });
+    await db.transactions.add({ type: 'expense', amount: 15000, categoryId: food, date: `${cur}-02`, createdAt: 2, merchant: 'Grocer' });
+    await db.transactions.add({ type: 'expense', amount: 9000, categoryId: fund, date: `${cur}-03`, createdAt: 3, merchant: 'Bank' });
+    const user = userEvent.setup();
+    renderHistory();
+    const card = await screen.findByTestId('month-snapshot');
+
+    await user.click(within(card).getByRole('button', { name: /^Saved & invested/ }));
+    await waitFor(() => expect(screen.queryByText(/Grocer/)).not.toBeInTheDocument());
+    expect(screen.getByText(/Bank/)).toBeInTheDocument();
+    expect(screen.queryByText(/Employer/)).not.toBeInTheDocument();
+
+    await user.click(within(card).getByRole('button', { name: /^Income/ }));
+    expect(await screen.findByText(/Employer/)).toBeInTheDocument();
+    expect(screen.queryByText(/Bank/)).not.toBeInTheDocument();
+
+    await user.click(within(card).getByRole('button', { name: /^Spent/ }));
+    expect(await screen.findByText(/Grocer/)).toBeInTheDocument();
+    expect(screen.queryByText(/Bank/)).not.toBeInTheDocument();
+
+    await user.click(within(card).getByRole('button', { name: /^Spent/ }));
+    expect(await screen.findByText(/Bank/)).toBeInTheDocument();
+    expect(screen.getByText(/Employer/)).toBeInTheDocument();
   });
 });

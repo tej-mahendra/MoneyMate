@@ -330,8 +330,7 @@ describe("Dashboard — closed-month review", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    await screen.findByLabelText("Previous month");
-    await user.click(screen.getByLabelText("Previous month"));
+    await waitFor(() => expect(screen.getByLabelText("Previous month")).toBeEnabled());
     await user.click(screen.getByLabelText("Previous month"));
 
     expect((await screen.findAllByText(monthLabel(past))).length).toBeGreaterThan(0);
@@ -377,15 +376,38 @@ describe("Dashboard — closed-month review", () => {
     expect(await screen.findByText(`Over budget by ${fmtMoney(500, "₹")}`)).toBeInTheDocument();
   });
 
-  it("says so when a closed month has nothing recorded", async () => {
-    const user = userEvent.setup();
+  it("says so when a closed month with nothing recorded is opened by link", async () => {
     await makeBracket("spend");
     await db.transactions.add({ type: "expense", amount: 10, categoryId: 999, date: `${addMonths(monthKey(todayISO()), -3)}-05`, createdAt: 0 });
+    render(
+      <MemoryRouter initialEntries={[`/budget?month=${addMonths(monthKey(todayISO()), -1)}`]}>
+        <Dashboard currency="₹" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/Nothing recorded for/)).toBeInTheDocument();
+  });
+
+  it("only steps through months that have entries — no empty months in between or before", async () => {
+    const user = userEvent.setup();
+    const cur = monthKey(todayISO());
+    await makeBracket("spend");
+    await db.transactions.add({ type: "expense", amount: 10, categoryId: 999, date: `${cur}-02`, createdAt: 0 });
+    await db.transactions.add({ type: "expense", amount: 10, categoryId: 999, date: `${addMonths(cur, -3)}-05`, createdAt: 0 });
     renderDashboard();
-    await screen.findByLabelText("Previous month");
     await waitFor(() => expect(screen.getByLabelText("Previous month")).toBeEnabled());
     await user.click(screen.getByLabelText("Previous month"));
-    expect(await screen.findByText(/Nothing recorded for/)).toBeInTheDocument();
+    expect((await screen.findAllByText(monthLabel(addMonths(cur, -3)))).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Previous month")).toBeDisabled();
+  });
+
+  it("offers to add an entry to a closed month", async () => {
+    const { past } = await seedPastMonth();
+    render(
+      <MemoryRouter initialEntries={[`/budget?month=${past}`]}>
+        <Dashboard currency="₹" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: `Add entry to ${monthLabel(past)}` })).toBeInTheDocument();
   });
 });
 

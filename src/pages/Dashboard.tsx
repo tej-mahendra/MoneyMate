@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -17,6 +17,7 @@ import {
 import CategoryRow from "../components/CategoryRow";
 import Ring from "../components/Ring";
 import MonthReview from "../components/MonthReview";
+import { adjacentMonth, loggedMonthsFromDates } from "../lib/loggedMonths";
 import { shouldNudgeBackup, snoozeUntil, oldestCreatedAt } from "../lib/backupNudge";
 import { Wallet, Receipt, ChevronLeft, ChevronRight, CalendarCheck, Save, X } from "lucide-react";
 
@@ -79,18 +80,6 @@ export default function Dashboard({ currency }: { currency: string }) {
     writePromptDismissed(prevMonth);
     setPromptDismissed(true);
   }
-  // Earliest month with any data, so the back arrow stops where there is
-  // nothing to review instead of paging through empty years.
-  const earliestMonth =
-    useLiveQuery(async () => {
-      const first = await db.transactions.orderBy("date").first();
-      const hist = await db.budgetHistory.orderBy("month").first();
-      const cands = [first ? monthKey(first.date) : null, hist?.month ?? null].filter(
-        (m): m is string => !!m,
-      );
-      return cands.length ? cands.sort()[0] : curMonth;
-    }, [curMonth]) ?? curMonth;
-
   const brackets = useLiveQuery(() => db.brackets.toArray(), []) ?? EMPTY_LIST;
   const spendBracketIds = new Set(
     brackets.filter((b) => b.kind === "spend" && !b.archived).map((b) => b.id),
@@ -111,6 +100,14 @@ export default function Dashboard({ currency }: { currency: string }) {
       .map((c) => c.id),
   );
   const txs = useLiveQuery(() => db.transactions.toArray(), []) ?? EMPTY_LIST;
+  // The arrows walk only months that have something logged, so if logging
+  // began in November there is no October to browse.
+  const loggedMonths = useMemo(
+    () => loggedMonthsFromDates(txs.map((t) => t.date), curMonth),
+    [txs, curMonth],
+  );
+  const prevLogged = adjacentMonth(loggedMonths, viewMonth, -1);
+  const nextLogged = adjacentMonth(loggedMonths, viewMonth, 1);
 
   const monthTx = txs.filter((t) => monthKey(t.date) === curMonth);
   // Excludes transactions logged against allocation categories (e.g. an
@@ -194,8 +191,8 @@ export default function Dashboard({ currency }: { currency: string }) {
           <button
             className="icon-btn"
             aria-label="Previous month"
-            disabled={viewMonth <= earliestMonth}
-            onClick={() => setViewMonth((m) => addMonths(m, -1))}
+            disabled={!prevLogged}
+            onClick={() => prevLogged && setViewMonth(prevLogged)}
           >
             <ChevronLeft size={16} />
           </button>
@@ -203,8 +200,8 @@ export default function Dashboard({ currency }: { currency: string }) {
           <button
             className="icon-btn"
             aria-label="Next month"
-            disabled={!isPast}
-            onClick={() => setViewMonth((m) => addMonths(m, 1))}
+            disabled={!nextLogged}
+            onClick={() => nextLogged && setViewMonth(nextLogged)}
           >
             <ChevronRight size={16} />
           </button>
@@ -221,6 +218,7 @@ export default function Dashboard({ currency }: { currency: string }) {
       </header>
       <div className="content">
         {isPast ? (
+          <>
           <MonthReview
             month={viewMonth}
             currency={currency}
@@ -228,6 +226,16 @@ export default function Dashboard({ currency }: { currency: string }) {
               navigate(`/history?cat=${id}&month=${viewMonth}`)
             }
           />
+          <button
+            className="btn small secondary"
+            style={{ width: "100%", marginTop: 4 }}
+            onClick={() =>
+              navigate(`/add?date=${viewMonth}-${String(daysInMonth(viewMonth)).padStart(2, "0")}`)
+            }
+          >
+            Add entry to {monthLabel(viewMonth)}
+          </button>
+          </>
         ) : (
         <>
         {showReviewPrompt && (

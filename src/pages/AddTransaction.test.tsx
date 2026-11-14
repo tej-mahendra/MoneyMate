@@ -5,6 +5,8 @@ import { MemoryRouter } from "react-router-dom";
 import AddTransaction from "./AddTransaction";
 import { db } from "../db/db";
 import Toast from "../components/Toast";
+import ConfirmDialog from "../components/ConfirmDialog";
+import { monthKey, todayISO, addMonths } from "../lib/format";
 
 beforeEach(async () => {
   await db.transactions.clear();
@@ -206,7 +208,7 @@ describe("AddTransaction — split expense: only your own share is ever saved as
       type: "expense",
       amount: 1000,
       categoryId: catId,
-      date: "2026-08-01",
+      date: `${monthKey(todayISO())}-01`,
       createdAt: Date.now(),
     });
     await db.splitShares.add({
@@ -247,7 +249,7 @@ describe("AddTransaction — split expense: only your own share is ever saved as
       type: "expense",
       amount: 1000,
       categoryId: catId,
-      date: "2026-08-01",
+      date: `${monthKey(todayISO())}-01`,
       createdAt: Date.now(),
     });
     await db.splitShares.add({
@@ -336,5 +338,115 @@ describe("AddTransaction — save failures", () => {
     expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
 
     addSpy.mockRestore();
+  });
+});
+
+
+describe("AddTransaction — closed months and savings", () => {
+  const cur = monthKey(todayISO());
+  const past = addMonths(cur, -2);
+
+  async function seed() {
+    const spend = await db.brackets.add({ name: "Expenditure", icon: "💳", color: "#7C93F0", kind: "spend" });
+    const save = await db.brackets.add({ name: "Savings", icon: "💰", color: "#4FD9B8", kind: "allocation" });
+    const food = await db.categories.add({ name: "Food", icon: "🍔", color: "#F0B94D", budget: 0, bracketId: spend });
+    const fund = await db.categories.add({ name: "Emergency fund", icon: "🛟", color: "#4FD9B8", budget: 0, bracketId: save });
+    return { food, fund };
+  }
+  function renderWithDialog(path: string) {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <AddTransaction />
+        <ConfirmDialog />
+      </MemoryRouter>,
+    );
+  }
+
+  it("asks before adding an entry to a closed month, and saves only after confirming", async () => {
+    const { food } = await seed();
+    const user = userEvent.setup();
+    renderWithDialog(`/add?date=${past}-15`);
+
+    await user.type(await screen.findByPlaceholderText("0.00"), "300");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    expect(await db.transactions.count()).toBe(0); // nothing written yet
+    await user.click(screen.getByRole("button", { name: "Add entry" }));
+
+    await waitFor(async () => {
+      const txs = await db.transactions.toArray();
+      expect(txs).toHaveLength(1);
+      expect(txs[0].date).toBe(`${past}-15`);
+      expect(txs[0].categoryId).toBe(food);
+    });
+  });
+
+  it("cancelling the closed-month confirmation saves nothing", async () => {
+    await seed();
+    const user = userEvent.setup();
+    renderWithDialog(`/add?date=${past}-15`);
+
+    await user.type(await screen.findByPlaceholderText("0.00"), "300");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(await db.transactions.count()).toBe(0);
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled();
+  });
+
+  it("does not interrupt entries dated in the current month", async () => {
+    await seed();
+    const user = userEvent.setup();
+    renderAdd();
+    await user.type(await screen.findByPlaceholderText("0.00"), "50");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(async () => expect(await db.transactions.count()).toBe(1));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("editing a closed-month entry asks first and leaves it untouched on Cancel", async () => {
+    const { food } = await seed();
+    const id = await db.transactions.add({ type: "expense", amount: 100, categoryId: food, date: `${past}-10`, createdAt: 1 });
+    const user = userEvent.setup();
+    renderWithDialog(`/add?edit=${id}`);
+
+    const amt = await screen.findByDisplayValue("100");
+    await user.clear(amt);
+    await user.type(amt, "250");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((await db.transactions.get(id))!.amount).toBe(100);
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click((await screen.findAllByRole("button", { name: "Save changes" })).at(-1)!);
+    await waitFor(async () => expect((await db.transactions.get(id))!.amount).toBe(250));
+  });
+
+  it("the Savings tab lists only savings/investment categories and logs them as money moved, not spend", async () => {
+    const { fund } = await seed();
+    const user = userEvent.setup();
+    renderAdd();
+
+    await user.click(await screen.findByRole("button", { name: "Savings" }));
+    await user.type(screen.getByPlaceholderText("0.00"), "5000");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(async () => {
+      const txs = await db.transactions.toArray();
+      expect(txs).toHaveLength(1);
+      expect(txs[0].categoryId).toBe(fund);
+      expect(txs[0].type).toBe("expense");
+    });
+  });
+
+  it("opens an existing savings entry on the Savings tab", async () => {
+    const { fund } = await seed();
+    const id = await db.transactions.add({ type: "expense", amount: 700, categoryId: fund, date: `${cur}-02`, createdAt: 1 });
+    renderWithDialog(`/add?edit=${id}`);
+    const tab = await screen.findByRole("button", { name: "Savings" });
+    await waitFor(() => expect(tab).toHaveClass("active"));
   });
 });

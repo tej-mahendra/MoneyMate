@@ -3,12 +3,19 @@ import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { db, type TxType, type SplitShare } from "../db/db";
-import { todayISO, roundMoney } from "../lib/format";
+import { todayISO, roundMoney, monthKey, monthLabel } from "../lib/format";
 import { useUIStore } from "../store/useUIStore";
 import Dropdown from "../components/Dropdown";
 import { X, Users } from "lucide-react";
 
-const RECENT_CAT_KEY = "pfos_last_category"; // suffixed per type, e.g. `${RECENT_CAT_KEY}_expense`
+const RECENT_CAT_KEY = "pfos_last_category"; // suffixed per kind, e.g. `${RECENT_CAT_KEY}_expense`
+
+/** What the person is logging. Savings/investments are stored as expense-type
+ *  transactions in an allocation bracket (money moved, not spent) — "savings"
+ *  is only a UI kind so they get their own tab instead of hiding in Expense. */
+type Kind = "expense" | "income" | "savings";
+const isISODate = (v: string | null): v is string =>
+  !!v && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(v);
 
 interface SplitPersonDraft {
   name: string;
@@ -41,26 +48,46 @@ export default function AddTransaction() {
     [editId],
   );
   const showToast = useUIStore((s) => s.showToast);
+  const showConfirm = useUIStore((s) => s.showConfirm);
   const allCategories = useLiveQuery(() => db.categories.toArray(), []) ?? EMPTY_LIST;
   const allBrackets = useLiveQuery(() => db.brackets.toArray(), []) ?? EMPTY_LIST;
   const bracketKindById = new Map(allBrackets.map((b) => [b.id, b.kind]));
   const bracketById = new Map(allBrackets.map((b) => [b.id, b]));
 
-  const [type, setType] = useState<TxType>("expense");
-  // Income and expense are structurally different concepts — a budget category
-  // like "Food" makes no sense for a salary deposit, so they get separate lists
-  // rather than sharing one (see Settings → Income sources for how these are managed).
-  const categories = allCategories.filter((c) => {
-    const bracket = bracketById.get(c.bracketId);
-    if (!bracket || bracket.archived) return false; // hidden bracket, or an orphaned category with no bracket at all
-    return type === "income"
-      ? bracket.kind === "income"
-      : bracket.kind !== "income";
-  });
+  const [kind, setKind] = useState<Kind>("expense");
+  const type: TxType = kind === "income" ? "income" : "expense";
+  // Each kind has its own category list — a "Food" cap makes no sense for a
+  // salary deposit, and savings transfers aren't spending (see Settings →
+  // Income sources / brackets for how these are managed).
+  const kindOfCat = (c: { bracketId: number }): Kind | null => {
+    const b = bracketById.get(c.bracketId);
+    if (!b) return null; // orphaned category with no bracket at all
+    return b.kind === "income" ? "income" : b.kind === "allocation" ? "savings" : "expense";
+  };
+  // When editing, the entry's own category stays selectable even if its
+  // bracket has since been archived — otherwise old entries can't be edited.
+  const ownCategory = editingTx
+    ? allCategories.find((c) => c.id === editingTx.categoryId)
+    : undefined;
+  function categoriesFor(k: Kind) {
+    const list = allCategories.filter((c) => {
+      const bracket = bracketById.get(c.bracketId);
+      return !!bracket && !bracket.archived && kindOfCat(c) === k;
+    });
+    if (ownCategory && !list.includes(ownCategory) && kindOfCat(ownCategory) === k) {
+      list.push(ownCategory);
+    }
+    return list;
+  }
+  const categories = categoriesFor(kind);
 
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [date, setDate] = useState(todayISO());
+  // ?date=yyyy-mm-dd lets other screens start an entry in a past month.
+  const [date, setDate] = useState(() => {
+    const d = searchParams.get("date");
+    return isISODate(d) ? d : todayISO();
+  });
   const [merchant, setMerchant] = useState("");
   const [note, setNote] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("UPI");
@@ -104,7 +131,10 @@ export default function AddTransaction() {
     // prefilled.current before that would silently skip loading split data.
     if (editId && existingShares === undefined) return;
     prefilled.current = true;
-    setType(editingTx.type);
+    // Only income is decided here; whether an expense is really a savings
+    // transfer is resolved from its category by the effect below (this
+    // prefill can run after it, so it must not reset the tab to Expense).
+    if (editingTx.type === "income") setKind("income");
     setCategoryId(editingTx.categoryId);
     setDate(editingTx.date);
     setMerchant(editingTx.merchant || "");
@@ -132,6 +162,26 @@ export default function AddTransaction() {
     }
   }, [editingTx, existingShares, editId]);
 
+  // An edited expense that was really a savings/investment transfer opens on
+  // the Savings tab. Needs categories + brackets, which load independently.
+  const kindResolved = useRef(false);
+  useEffect(() => {
+    if (!editingTx || kindResolved.current || editingTx.type === "income") return;
+    if (!ownCategory || allBrackets.length === 0) return;
+    kindResolved.current = true;
+    if (kindOfCat(ownCategory) === "savings") setKind("savings");
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingTx, ownCategory, allBrackets.length]);
+
+  function chooseKind(k: Kind) {
+    setKind(k);
+    if (editId) {
+      // Edit mode skips the auto-pick below, so keep the category valid.
+      const next = categoriesFor(k);
+      if (!next.some((c) => c.id === categoryId)) setCategoryId(next[0]?.id ?? null);
+    }
+  }
+
   useEffect(() => {
     // In edit mode the category comes from the transaction being edited
     // (handled by the prefill effect above), not from "last used" —
@@ -142,13 +192,13 @@ export default function AddTransaction() {
       setCategoryId(null);
       return;
     }
-    const last = localStorage.getItem(`${RECENT_CAT_KEY}_${type}`);
+    const last = localStorage.getItem(`${RECENT_CAT_KEY}_${kind}`);
     const found = last && categories.find((c) => c.id === Number(last));
     setCategoryId(found ? found.id! : categories[0].id!);
     // Deliberately keyed on categories.length, not the array: re-running on
     // every category edit would reset the category the person just picked.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, categories.length, editId]);
+  }, [kind, categories.length, editId]);
 
   // Valid split rows: a real name and a positive amount. Rows with a blank
   // name or empty amount are just in-progress drafts, not real people yet.
@@ -162,7 +212,7 @@ export default function AddTransaction() {
     validSplitPeople.reduce((s, p) => s + p.amount, 0),
   );
   const isSplitting =
-    type === "expense" && splitEnabled && validSplitPeople.length > 0;
+    kind === "expense" && splitEnabled && validSplitPeople.length > 0;
   const yourShare = roundMoney(
     isSplitting
       ? (parseFloat(amount) || 0) - splitOthersTotal
@@ -261,6 +311,32 @@ export default function AddTransaction() {
       return;
     }
     const amt = isSplitting ? yourShare : totalAmt;
+
+    // Anything that touches a closed month changes a total people have
+    // already reviewed — confirm it. This month's entries stay one-tap.
+    const curMonth = monthKey(todayISO());
+    const newMonth = monthKey(date);
+    const oldMonth = editingTx ? monthKey(editingTx.date) : null;
+    if (editId && (newMonth < curMonth || (oldMonth !== null && oldMonth < curMonth))) {
+      const moved = oldMonth !== null && oldMonth !== newMonth;
+      const ok = await showConfirm({
+        title: "Save changes?",
+        message: moved
+          ? `This moves the entry from ${monthLabel(oldMonth!)} to ${monthLabel(newMonth)} and updates both months.`
+          : `This updates ${monthLabel(newMonth)}'s totals.`,
+        confirmLabel: "Save changes",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+    } else if (!editId && newMonth < curMonth) {
+      const ok = await showConfirm({
+        title: `Add to ${monthLabel(newMonth)}?`,
+        message: `This changes ${monthLabel(newMonth)}'s totals.`,
+        confirmLabel: "Add entry",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+    }
     setSaving(true);
 
     if (editId) {
@@ -315,7 +391,7 @@ export default function AddTransaction() {
     // Remembering the last category is a convenience — a blocked
     // localStorage must not turn a successful save into an error.
     try {
-      localStorage.setItem(`${RECENT_CAT_KEY}_${type}`, String(categoryId));
+      localStorage.setItem(`${RECENT_CAT_KEY}_${kind}`, String(categoryId));
     } catch {
       /* ignore */
     }
@@ -336,9 +412,15 @@ export default function AddTransaction() {
       // Spend-category transactions land on Budget (Rent/Food/etc.) for
       // immediate feedback on the category cap; allocation and income
       // transactions land on Home, since Budget never shows those at all.
+      // Entries dated in a closed month land on that month's History so the
+      // result is visible; otherwise the usual landing screens.
+      if (monthKey(date) < curMonth) {
+        navigate(`/history?month=${monthKey(date)}`);
+        return;
+      }
       const cat = categories.find((c) => c.id === categoryId);
-      const kind = cat ? bracketKindById.get(cat.bracketId) : undefined;
-      navigate(kind === "spend" ? "/budget" : "/");
+      const bk = cat ? bracketKindById.get(cat.bracketId) : undefined;
+      navigate(bk === "spend" ? "/budget" : "/");
     }
   }
 
@@ -360,18 +442,15 @@ export default function AddTransaction() {
       <div className="content">
         <div className="card">
           <div className="chip-row" style={{ marginBottom: 4 }}>
-            <button
-              className={"chip" + (type === "expense" ? " active" : "")}
-              onClick={() => setType("expense")}
-            >
-              Expense
-            </button>
-            <button
-              className={"chip" + (type === "income" ? " active" : "")}
-              onClick={() => setType("income")}
-            >
-              Income
-            </button>
+            {(["expense", "income", "savings"] as Kind[]).map((k) => (
+              <button
+                key={k}
+                className={"chip" + (kind === k ? " active" : "")}
+                onClick={() => chooseKind(k)}
+              >
+                {k === "expense" ? "Expense" : k === "income" ? "Income" : "Savings"}
+              </button>
+            ))}
           </div>
 
           <label htmlFor="amt">
@@ -388,7 +467,7 @@ export default function AddTransaction() {
             onWheel={(e) => e.currentTarget.blur()}
           />
 
-          {type === "expense" && (
+          {kind === "expense" && (
             <>
               <button
                 type="button"
@@ -513,7 +592,7 @@ export default function AddTransaction() {
           ) : (
             <>
               <label htmlFor="cat">
-                {type === "income" ? "Source" : "Category"}
+                {kind === "income" ? "Source" : "Category"}
               </label>
               <Dropdown
                 id="cat"

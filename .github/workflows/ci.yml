@@ -1,0 +1,36 @@
+# Runs on every push and pull request. A red ✗ means something is broken
+# *before* it reaches your phone. Needs no secrets and no signing key.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# If you push twice quickly, cancel the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (exactly what package-lock.json says)
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Type check + production build
+        run: npm run build
