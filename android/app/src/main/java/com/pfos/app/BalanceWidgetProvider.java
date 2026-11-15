@@ -1,4 +1,4 @@
-package com.pfos.app;
+package com.moneymate.app;
 
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;

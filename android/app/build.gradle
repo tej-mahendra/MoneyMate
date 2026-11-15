@@ -28,10 +28,10 @@ gradle.taskGraph.whenReady { graph ->
 }
 
 android {
-    namespace = "com.pfos.app"
+    namespace = "com.moneymate.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.pfos.app"
+        applicationId "com.moneymate.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode versionProps['versionCode'].toInteger()

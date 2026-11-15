@@ -1,8 +1,6 @@
 # Money Mate — Privacy Policy
 
-_Last updated: [DATE — fill in before publishing]_
-
-> **Draft for the developer.** This was written from what the app's code actually does (no network calls, no analytics, no accounts). Replace the bracketed placeholders, host it at a public URL, and have it reviewed if you want legal certainty. It is not legal advice. If the app ever adds analytics, crash reporting, sync or ads, this policy and the Play Data safety form must be updated first.
+_Last updated: 15-11-2026_
 
 ## The short version
 
@@ -46,4 +44,4 @@ If this policy changes, the updated version will be posted at this address with 
 
 ## Contact
 
-[YOUR NAME OR COMPANY] · [CONTACT EMAIL]
+Tej Mahendra · reddytej15@gmail.com
