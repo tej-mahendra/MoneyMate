@@ -17,10 +17,10 @@ Both changes were additive: an older backup simply lacks the newer arrays, and
 restoring it is not an error. A backup from a **newer** version than the app is
 refused.
 
-**Which export contains what.** The full backup (`pfos-backup-*.json`) holds the
+**Which export contains what.** The full backup (`moneymate-backup-*.json`) holds the
 raw tables: `brackets`, `categories`, `transactions`, `recurring`, `settings`,
 `splitShares`, `budgetHistory` (camelCase field names, as stored). The ML dataset
-(`pfos-ml-dataset-*.json`) is for analysis instead: enriched `transactions`
+(`moneymate-ml-dataset-*.json`) is for analysis instead: enriched `transactions`
 (the PascalCase columns below), `categories`, `brackets`, `recurring` and
 `monthlySummary`, plus `currency` and `exportedAt`. It does **not** include
 `splitShares`, `budgetHistory` or `settings`.
@@ -44,14 +44,14 @@ under Income. A bracket's own total is always the sum of its categories' budgets
 
 | File                         | Grain                                 | Purpose                                    |
 | ---------------------------- | ------------------------------------- | ------------------------------------------ |
-| `pfos-transactions-*.csv`    | One row per transaction               | Fact table                                 |
-| `pfos-categories-*.csv`      | One row per category                  | Dimension table                            |
-| `pfos-brackets-*.csv`        | One row per bracket                   | Dimension table                            |
-| `pfos-monthly-summary-*.csv` | One row per (month, category)         | Pre-aggregated budget vs. actual           |
-| `pfos-ml-dataset-*.json`     | All tables + recurring rules, bundled | Single-file load for a notebook            |
-| `pfos-backup-*.json`         | Full raw state                        | Restore/backup — not intended for analysis |
+| `moneymate-transactions-*.csv`    | One row per transaction               | Fact table                                 |
+| `moneymate-categories-*.csv`      | One row per category                  | Dimension table                            |
+| `moneymate-brackets-*.csv`        | One row per bracket                   | Dimension table                            |
+| `moneymate-monthly-summary-*.csv` | One row per (month, category)         | Pre-aggregated budget vs. actual           |
+| `moneymate-ml-dataset-*.json`     | All tables + recurring rules, bundled | Single-file load for a notebook            |
+| `moneymate-backup-*.json`         | Full raw state                        | Restore/backup — not intended for analysis |
 
-## `pfos-transactions-*.csv` (fact table)
+## `moneymate-transactions-*.csv` (fact table)
 
 | Field            | Type                 | Notes                                                                   |
 | ---------------- | -------------------- | ----------------------------------------------------------------------- |
@@ -62,7 +62,7 @@ under Income. A bracket's own total is always the sum of its categories' budgets
 | `Week`           | integer, 1–53        | ISO 8601 week number                                                    |
 | `Weekday`        | string               | Full name, e.g. `Monday`                                                |
 | `IsWeekend`      | boolean              |                                                                         |
-| `CategoryId`     | integer              | **Join key** to `pfos-categories-*.csv`                                 |
+| `CategoryId`     | integer              | **Join key** to `moneymate-categories-*.csv`                                 |
 | `Category`       | string               | Denormalized category name, for convenience                             |
 | `Merchant`       | string               | May be blank                                                            |
 | `PaymentMethod`  | string               | e.g. `UPI`, `Cash`, `Credit Card` — free text, not a fixed enum         |
@@ -77,13 +77,13 @@ Text fields that could start with `= + - @` are prefixed with a leading `'` to
 prevent CSV formula injection when opened in Excel/Sheets — strip that prefix
 back off in code if you're parsing programmatically rather than opening by hand.
 
-## `pfos-categories-*.csv` (dimension table)
+## `moneymate-categories-*.csv` (dimension table)
 
 | Field           | Type    | Notes                                                                                                                                                                                 |
 | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CategoryId`    | integer | Primary key                                                                                                                                                                           |
 | `Name`          | string  |                                                                                                                                                                                       |
-| `BracketId`     | integer | **Join key** to `pfos-brackets-*.csv`                                                                                                                                                 |
+| `BracketId`     | integer | **Join key** to `moneymate-brackets-*.csv`                                                                                                                                                 |
 | `BracketName`   | string  | Denormalized, for convenience                                                                                                                                                         |
 | `BracketKind`   | string  | Denormalized from the bracket — `spend`, `allocation`, or `income` (see below)                                                                                                        |
 | `Icon`          | string  | Emoji                                                                                                                                                                                 |
@@ -91,7 +91,7 @@ back off in code if you're parsing programmatically rather than opening by hand.
 | `MonthlyBudget` | float   | For a `spend`-kind bracket, the budget cap. For `allocation`, the target amount (same field, different meaning — filter on `BracketKind` before aggregating). Always `0` for `income` |
 | `Archived`      | boolean | Archived categories are excluded from onboarding/active views but not deleted                                                                                                         |
 
-## `pfos-brackets-*.csv` (dimension table)
+## `moneymate-brackets-*.csv` (dimension table)
 
 | Field       | Type    | Notes                                                                                                                                                                                                                                            |
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -102,14 +102,14 @@ back off in code if you're parsing programmatically rather than opening by hand.
 | `Color`     | string  | Hex color used in-app                                                                                                                                                                                                                            |
 | `Archived`  | boolean |                                                                                                                                                                                                                                                  |
 
-## `pfos-monthly-summary-*.csv`
+## `moneymate-monthly-summary-*.csv`
 
 | Field          | Type              | Notes                                                                                                                                                                                        |
 | -------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Month`        | string, `YYYY-MM` |                                                                                                                                                                                              |
 | `CategoryId`   | integer           | Join key                                                                                                                                                                                     |
 | `CategoryName` | string            |                                                                                                                                                                                              |
-| `BracketId`    | integer           | Join key to `pfos-brackets-*.csv`                                                                                                                                                            |
+| `BracketId`    | integer           | Join key to `moneymate-brackets-*.csv`                                                                                                                                                            |
 | `BracketName`  | string            | Denormalized, for convenience                                                                                                                                                                |
 | `BracketKind`  | string            | `spend`, `allocation`, or `income` — filter to `spend` for a true "budget cap" visual; `allocation` rows are target-vs-actual for Savings/Investments/EMI-style categories, not capped spend |
 | `Budget`       | float             | Cap for `spend`, target for `allocation`                                                                                                                                                     |
@@ -119,11 +119,11 @@ back off in code if you're parsing programmatically rather than opening by hand.
 
 ## Power BI setup
 
-1. Get Data → Text/CSV → import `pfos-transactions-*.csv`, `pfos-categories-*.csv`, and `pfos-brackets-*.csv`.
+1. Get Data → Text/CSV → import `moneymate-transactions-*.csv`, `moneymate-categories-*.csv`, and `moneymate-brackets-*.csv`.
 2. Model view → drag `CategoryId` from Transactions to `CategoryId` on Categories
    (many-to-one, Transactions → Categories), and `BracketId` from Categories to
    `BracketId` on Brackets (many-to-one, Categories → Brackets).
-3. Optionally also import `pfos-monthly-summary-*.csv` as a second fact table at
+3. Optionally also import `moneymate-monthly-summary-*.csv` as a second fact table at
    a coarser grain — faster for budget-vs-actual visuals since no DAX aggregation
    is needed.
 4. Build measures against `Amount` filtered by `Type = "expense"` / `"income"` as
@@ -133,13 +133,13 @@ back off in code if you're parsing programmatically rather than opening by hand.
    brackets (Savings, Investments, EMI…) are targets, not caps, and mixing
    them into the same visual will overstate or understate the budget picture.
 
-## Using the ML dataset (`pfos-ml-dataset-*.json`)
+## Using the ML dataset (`moneymate-ml-dataset-*.json`)
 
 ```python
 import json
 import pandas as pd
 
-with open("pfos-ml-dataset-2026-07-20.json") as f:
+with open("moneymate-ml-dataset-2026-07-20.json") as f:
     data = json.load(f)
 
 print(data["schemaVersion"])  # check this before trusting field names

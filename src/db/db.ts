@@ -160,7 +160,7 @@ class MoneyMateDatabase extends Dexie {
   budgetHistory!: Table<BudgetHistoryEntry, number>;
 
   constructor() {
-    super("pfos_db");
+    super("moneymate_db");
     this.version(1).stores({
       categories: "++id, name, archived",
       transactions: "++id, type, categoryId, date, recurringId",

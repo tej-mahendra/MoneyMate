@@ -107,7 +107,7 @@ export async function exportTransactionsCSV(): Promise<string> {
 }
 
 /** Dimension table for brackets — Expenditure/Savings/Investments/Income or
- *  any custom ones. Pairs with pfos-categories-*.csv via BracketId. */
+ *  any custom ones. Pairs with moneymate-categories-*.csv via BracketId. */
 export async function exportBracketsCSV(): Promise<string> {
   const { brackets } = await loadAll();
   const rows = brackets.map((b) => ({

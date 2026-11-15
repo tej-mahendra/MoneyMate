@@ -17,7 +17,7 @@ import org.json.JSONObject;
 
 /**
  * Larger (4x2) sibling of BalanceWidgetProvider. Same on-device-only data
- * source (the "pfos_widget" SharedPreferences file written by
+ * source (the "moneymate_widget" SharedPreferences file written by
  * WidgetBridgePlugin) — this just has room to also show a mini per-category
  * breakdown instead of only the month total.
  *

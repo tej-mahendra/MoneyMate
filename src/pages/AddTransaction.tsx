@@ -8,7 +8,7 @@ import { useUIStore } from "../store/useUIStore";
 import Dropdown from "../components/Dropdown";
 import { X, Users } from "lucide-react";
 
-const RECENT_CAT_KEY = "pfos_last_category"; // suffixed per kind, e.g. `${RECENT_CAT_KEY}_expense`
+const RECENT_CAT_KEY = "moneymate_last_category"; // suffixed per kind, e.g. `${RECENT_CAT_KEY}_expense`
 
 /** What the person is logging. Savings/investments are stored as expense-type
  *  transactions in an allocation bracket (money moved, not spent) — "savings"

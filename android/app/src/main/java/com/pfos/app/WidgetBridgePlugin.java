@@ -28,7 +28,7 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "WidgetBridge")
 public class WidgetBridgePlugin extends Plugin {
 
-    public static final String PREFS_NAME = "pfos_widget";
+    public static final String PREFS_NAME = "moneymate_widget";
 
     @PluginMethod
     public void updateWidget(PluginCall call) {

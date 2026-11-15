@@ -18,9 +18,9 @@ JavaScript or read IndexedDB. Instead:
 1. **`src/lib/widgetBridge.ts`** — on every Budget-screen render (`src/pages/Dashboard.tsx`, the category-level detail screen — not the app's Home landing screen), calls a custom native
    plugin (`WidgetBridge.updateWidget(...)`) with the current month's spent/budget/
    remaining totals. No-ops harmlessly when running as a plain website/PWA.
-2. **`WidgetBridgePlugin.java`** (`android/app/src/main/java/com/pfos/app/`) — the
+2. **`WidgetBridgePlugin.java`** (`android/app/src/main/java/com/moneymate/app/`) — the
    native side of that plugin. Writes the snapshot into a small native
-   `SharedPreferences` file (`pfos_widget`) — a different, OS-level storage
+   `SharedPreferences` file (`moneymate_widget`) — a different, OS-level storage
    mechanism from the WebView's IndexedDB — and immediately asks Android to redraw
    the widget.
 3. **`BalanceWidgetProvider.java`** — the actual `AppWidgetProvider`. Reads that

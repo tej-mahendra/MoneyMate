@@ -1,4 +1,4 @@
-package moneymate.app;
+package com.moneymate.app;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
