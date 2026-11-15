@@ -1,4 +1,4 @@
-moneymate.app;
+package moneymate.app;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -6,6 +6,7 @@ import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(WidgetBridgePlugin.class);
@@ -23,11 +24,18 @@ public class MainActivity extends BridgeActivity {
         stashPendingRoute(intent);
     }
 
-    /** Mirrors WidgetBridgePlugin.PREFS_NAME/"pendingRoute" — see its getPendingRoute(). */
+    /**
+     * Mirrors WidgetBridgePlugin.PREFS_NAME/"pendingRoute" — see its
+     * getPendingRoute().
+     */
     private void stashPendingRoute(Intent intent) {
-        if (intent == null) return;
+        if (intent == null) {
+            return;
+        }
         String route = intent.getStringExtra("route");
-        if (route == null) return;
+        if (route == null) {
+            return;
+        }
         SharedPreferences prefs = getSharedPreferences(WidgetBridgePlugin.PREFS_NAME, MODE_PRIVATE);
         prefs.edit().putString("pendingRoute", route).apply();
     }
