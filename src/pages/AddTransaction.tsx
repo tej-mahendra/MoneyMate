@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useGoBack } from "../lib/useGoBack";
 import { db, type TxType, type SplitShare } from "../db/db";
 import { todayISO, roundMoney, monthKey, monthLabel } from "../lib/format";
 import { useUIStore } from "../store/useUIStore";
 import Dropdown from "../components/Dropdown";
 import { X, Users } from "lucide-react";
 
-const RECENT_CAT_KEY = "moneymate_last_category"; // suffixed per kind, e.g. `${RECENT_CAT_KEY}_expense`
+const RECENT_CAT_KEY = "pfos_last_category"; // suffixed per kind, e.g. `${RECENT_CAT_KEY}_expense`
 
 /** What the person is logging. Savings/investments are stored as expense-type
  *  transactions in an allocation bracket (money moved, not spent) — "savings"
@@ -43,6 +44,8 @@ export default function AddTransaction() {
   const editId = searchParams.get("edit")
     ? Number(searchParams.get("edit"))
     : null;
+  // After saving an edit, return to the detail page we came from.
+  const goBackToDetail = useGoBack(`/transaction/${editId}`);
   const editingTx = useLiveQuery(
     () => (editId ? db.transactions.get(editId) : undefined),
     [editId],
@@ -362,7 +365,7 @@ export default function AddTransaction() {
       }
       setSaving(false);
       showToast("Transaction updated.");
-      navigate(`/transaction/${editId}`);
+      goBackToDetail();
       return;
     }
 
@@ -415,12 +418,13 @@ export default function AddTransaction() {
       // Entries dated in a closed month land on that month's History so the
       // result is visible; otherwise the usual landing screens.
       if (monthKey(date) < curMonth) {
-        navigate(`/history?month=${monthKey(date)}`);
+        navigate(`/history?month=${monthKey(date)}`, { replace: true });
         return;
       }
       const cat = categories.find((c) => c.id === categoryId);
       const bk = cat ? bracketKindById.get(cat.bracketId) : undefined;
-      navigate(bk === "spend" ? "/budget" : "/");
+      // replace: Back after saving shouldn't return to a finished Add form.
+      navigate(bk === "spend" ? "/budget" : "/", { replace: true });
     }
   }
 
@@ -631,6 +635,16 @@ export default function AddTransaction() {
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
+            // Desktop browsers open the calendar only from the tiny icon;
+            // open it from a click anywhere on the field. Typing still works,
+            // and browsers without showPicker() just keep their default.
+            onClick={(e) => {
+              try {
+                e.currentTarget.showPicker?.();
+              } catch {
+                /* not allowed in this context — the native behaviour applies */
+              }
+            }}
           />
 
           {!advanced ? (

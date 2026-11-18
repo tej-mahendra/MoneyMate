@@ -439,32 +439,4 @@ describe("Settings — encrypted backups", () => {
     expect((await db.categories.toArray())[0].name).toBe("Rent");
   }, 30000);
 
-  it('"Check a backup file" reports what is inside without changing this device', async () => {
-    await seedData();
-    const user = userEvent.setup();
-    const first = render(
-      <MemoryRouter>
-        <Settings settings={baseSettings} onSettingsChange={() => {}} />
-      </MemoryRouter>,
-    );
-    const text = await exportEncrypted(user, "correct horse");
-    first.unmount();
-    await db.transactions.clear();
-
-    renderSettingsWithToast();
-    const file = new File([text], "b.encrypted.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
-    await user.type(await screen.findByLabelText("Passphrase"), "correct horse");
-    await user.click(screen.getByRole("button", { name: "Unlock" }));
-    expect(await screen.findByText(/Backup is readable: 1 transactions, 1 categories/)).toBeInTheDocument();
-    expect(await db.transactions.count()).toBe(0); // check never restores
-  }, 30000);
-
-  it("tells you when the file to check isn't a backup", async () => {
-    const user = userEvent.setup();
-    renderSettingsWithToast();
-    const file = new File(["hello"], "x.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
-    expect(await screen.findByText(/doesn't look like a valid backup/)).toBeInTheDocument();
-  });
 });

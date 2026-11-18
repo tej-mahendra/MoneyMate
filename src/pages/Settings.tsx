@@ -193,8 +193,8 @@ export default function Settings({
   // Passphrase dialog for encrypted backups: one dialog, three jobs.
   type PassphraseJob =
     | { kind: "export" }
-    | { kind: "restore"; text: string }
-    | { kind: "check"; text: string };
+    | { kind: "restore"; text: string };
+
   const [ppJob, setPpJob] = useState<PassphraseJob | null>(null);
   const [ppError, setPpError] = useState<string | null>(null);
   const [ppBusy, setPpBusy] = useState(false);
@@ -222,63 +222,45 @@ export default function Settings({
       setPpJob(null);
     }
   }
-  // Unlocks an encrypted file, then either restores it or just checks it.
-  async function submitUnlock(passphrase: string) {
-    if (!ppJob || ppJob.kind === "export") return;
-    setPpBusy(true);
-    setPpError(null);
-    try {
-      const plain = await decryptBackup(ppJob.text, passphrase);
-      if (ppJob.kind === "check") {
-        showToast(describeSummary(plain));
-      } else {
-        await importFullBackup(plain);
-        showToast("Backup restored.");
-        const s = await updateSettings({});
-        onSettingsChange(s);
-      }
+// Unlocks an encrypted file, then either restores it or just checks it.
+async function submitUnlock(passphrase: string) {
+  if (!ppJob || ppJob.kind !== "restore") return;
+
+  setPpBusy(true);
+  setPpError(null);
+
+  try {
+    const plain = await decryptBackup(ppJob.text, passphrase);
+
+    await importFullBackup(plain);
+
+    showToast("Backup restored.");
+
+    const s = await updateSettings({});
+    onSettingsChange(s);
+
+    setPpJob(null);
+  } catch (err) {
+    if (err instanceof BackupPassphraseError) {
+      // Keep the dialog open so the user can retry.
+      // No data should have been modified.
+      setPpError(
+        "Wrong passphrase, or the file was changed. Nothing was restored.",
+      );
+    } else {
       setPpJob(null);
-    } catch (err) {
-      if (err instanceof BackupPassphraseError) {
-        // Stay open so they can retry; nothing was changed.
-        setPpError("Wrong passphrase, or the file was changed. Nothing was restored.");
-      } else {
-        setPpJob(null);
-        showToast(
-          err instanceof Error && err.message
-            ? err.message
-            : "That file doesn't look like a valid backup.",
-        );
-      }
-    } finally {
-      setPpBusy(false);
+
+      showToast(
+        err instanceof Error && err.message
+          ? err.message
+          : "That file doesn't look like a valid backup.",
+      );
     }
+  } finally {
+    setPpBusy(false);
   }
-  function describeSummary(plainJson: string) {
-    const s = summarizeBackup(plainJson);
-    const when = s.exportedAt ? ` Made ${s.exportedAt.slice(0, 10)}.` : "";
-    return `Backup is readable: ${s.transactions} transactions, ${s.categories} categories.${when}`;
-  }
-  // "Check a backup file": confirms a file opens and shows what's in it,
-  // without touching the data on this device.
-  async function onCheck(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    let text: string;
-    try {
-      text = await file.text();
-    } catch {
-      showToast("That file doesn't look like a valid backup.");
-      return;
-    }
-    if (!isEncryptedBackup(text)) {
-      explainNotEncrypted(text);
-      return;
-    }
-    setPpError(null);
-    setPpJob({ kind: "check", text });
-  }
+}
+
   // Why a file can't be used: a readable (plain) backup vs. not a backup at all.
   function explainNotEncrypted(text: string) {
     try {
@@ -818,16 +800,6 @@ export default function Settings({
             accept="application/json"
             onChange={onImport}
           />
-          {/* <label htmlFor="check-file" className="btn secondary">
-            Check a backup file
-          </label>
-          <input
-            id="check-file"
-            type="file"
-            className="sr-only"
-            accept="application/json"
-            onChange={onCheck}
-          /> */}
 
           <div className="danger-zone">
             <div className="danger-zone-label">Erase everything</div>
@@ -882,9 +854,7 @@ export default function Settings({
           title={
             ppJob.kind === "export"
               ? "Encrypt this backup"
-              : ppJob.kind === "restore"
-                ? "Unlock backup to restore"
-                : "Unlock backup to check it"
+              : "Unlock backup to restore"
           }
           busy={ppBusy}
           error={ppError}

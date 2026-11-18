@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown } from "lucide-react";
+import { isChunkLoadError, reloadForNewVersion } from "../lib/staleVersion";
 
 interface Props {
   children: ReactNode;
@@ -23,6 +24,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     // a stack trace (or anything it might incidentally contain, like a file
     // path) just because one screen hit a bug.
     console.error("Money Mate crashed:", error, info.componentStack);
+    // A screen's file was missing because a newer version was deployed while
+    // this page was open: reload once into the new version rather than
+    // leaving the person on an error screen.
+    if (isChunkLoadError(error)) reloadForNewVersion();
   }
 
   // Clears the crash and re-renders the same tree in place — the right

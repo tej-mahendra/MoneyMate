@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useParams } from "react-router-dom";
+import { useGoBack } from "../lib/useGoBack";
 import { db } from "../db/db";
 import { fmtMoney, longDate, fmtDateTime, iconBadgeStyle, monthLabel, todayISO } from "../lib/format";
 import { useUIStore } from "../store/useUIStore";
@@ -9,6 +10,8 @@ export default function TransactionDetail({ currency }: { currency: string }) {
   const { id } = useParams();
   const txId = Number(id);
   const navigate = useNavigate();
+  // Back goes to wherever the person came from (History, a bracket, Budget…).
+  const goBack = useGoBack("/history");
   const showToast = useUIStore((s) => s.showToast);
   const showConfirm = useUIStore((s) => s.showConfirm);
 
@@ -49,7 +52,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
       await db.transactions.delete(t.id!);
     });
     showToast("Transaction deleted.");
-    navigate("/history");
+    goBack();
   }
 
   // t === undefined while the query is still loading; null (via .get()
@@ -80,7 +83,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
           <button
             className="icon-btn"
             aria-label="Back"
-            onClick={() => navigate("/history")}
+            onClick={goBack}
           >
             <ChevronLeft size={20} />
           </button>
@@ -99,7 +102,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
             </div>
             <button
               className="btn secondary"
-              onClick={() => navigate("/history")}
+              onClick={goBack}
             >
               Back to history
             </button>
@@ -126,7 +129,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
           <button
             className="icon-btn"
             aria-label="Back"
-            onClick={() => navigate("/history")}
+            onClick={goBack}
           >
             <ChevronLeft size={20} />
           </button>

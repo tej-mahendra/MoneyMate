@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { installGlobalErrorHandlers } from "./lib/globalErrors";
+import {
+  installStaleVersionRecovery,
+  requestPersistentStorage,
+} from "./lib/staleVersion";
 
 // Self-hosted premium type system — no external font CDN calls, stays offline-first.
 import "@fontsource-variable/fraunces";
@@ -16,6 +20,8 @@ import "@fontsource/jetbrains-mono/700.css";
 import "./theme.css";
 
 installGlobalErrorHandlers();
+installStaleVersionRecovery();
+void requestPersistentStorage();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

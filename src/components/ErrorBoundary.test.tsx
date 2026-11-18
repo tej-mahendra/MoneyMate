@@ -110,3 +110,50 @@ describe("ErrorBoundary", () => {
     ).toHaveNoViolations();
   });
 });
+
+describe("ErrorBoundary — new version deployed while the page was open", () => {
+  const reload = vi.fn();
+  beforeEach(() => {
+    sessionStorage.clear();
+    reload.mockClear();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("location", { ...window.location, reload });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+  function StaleChunk(): never {
+    throw new Error("Failed to fetch dynamically imported module: /assets/Analytics-old.js");
+  }
+
+  it("reloads once into the new version when a screen's file is missing", () => {
+    render(
+      <ErrorBoundary>
+        <StaleChunk />
+      </ErrorBoundary>,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reload for ordinary bugs", () => {
+    render(
+      <ErrorBoundary>
+        <Bomb />
+      </ErrorBoundary>,
+    );
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+  });
+
+  it("shows the normal error screen (no reload loop) if it fails again right after reloading", () => {
+    sessionStorage.setItem("mm_stale_reload_at", String(Date.now()));
+    render(
+      <ErrorBoundary>
+        <StaleChunk />
+      </ErrorBoundary>,
+    );
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+  });
+});
