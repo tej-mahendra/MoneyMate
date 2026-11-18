@@ -30,6 +30,14 @@ import { useUIStore } from "../store/useUIStore";
 import { clearWidget } from "../lib/widgetSync";
 import { describeBackupAge } from "../lib/backupNudge";
 import IconPicker from "../components/IconPicker";
+import PassphraseDialog from "../components/PassphraseDialog";
+import {
+  BackupPassphraseError,
+  decryptBackup,
+  encryptBackup,
+  isEncryptedBackup,
+  summarizeBackup,
+} from "../lib/backupCrypto";
 
 const PALETTE = [
   "#F0B94D",
@@ -182,22 +190,103 @@ export default function Settings({
     );
   }
 
+  // Passphrase dialog for encrypted backups: one dialog, three jobs.
+  type PassphraseJob =
+    | { kind: "export" }
+    | { kind: "restore"; text: string }
+    | { kind: "check"; text: string };
+  const [ppJob, setPpJob] = useState<PassphraseJob | null>(null);
+  const [ppError, setPpError] = useState<string | null>(null);
+  const [ppBusy, setPpBusy] = useState(false);
+
   // Data management
-  async function doExportJSON() {
-    await tryExport(async () => {
+  async function doExportEncrypted(passphrase: string) {
+    setPpBusy(true);
+    try {
+      const encrypted = await encryptBackup(await exportFullBackup(), passphrase);
       await downloadFile(
-        `moneymate-backup-${todayISO()}.json`,
-        await exportFullBackup(),
+        `moneymate-backup-${todayISO()}.encrypted.json`,
+        encrypted,
         "application/json",
       );
-      // Only reached if the file was actually handed off (downloadFile throws
-      // when the export or share fails), so "last backup" isn't set early.
       const next = await updateSettings({
         lastBackupAt: Date.now(),
         backupNudgeSnoozedUntil: 0,
       });
       onSettingsChange(next);
-    });
+      showToast("Encrypted backup ready. Keep your passphrase safe.");
+    } catch {
+      showToast("Couldn't export that file. Please try again.");
+    } finally {
+      setPpBusy(false);
+      setPpJob(null);
+    }
+  }
+  // Unlocks an encrypted file, then either restores it or just checks it.
+  async function submitUnlock(passphrase: string) {
+    if (!ppJob || ppJob.kind === "export") return;
+    setPpBusy(true);
+    setPpError(null);
+    try {
+      const plain = await decryptBackup(ppJob.text, passphrase);
+      if (ppJob.kind === "check") {
+        showToast(describeSummary(plain));
+      } else {
+        await importFullBackup(plain);
+        showToast("Backup restored.");
+        const s = await updateSettings({});
+        onSettingsChange(s);
+      }
+      setPpJob(null);
+    } catch (err) {
+      if (err instanceof BackupPassphraseError) {
+        // Stay open so they can retry; nothing was changed.
+        setPpError("Wrong passphrase, or the file was changed. Nothing was restored.");
+      } else {
+        setPpJob(null);
+        showToast(
+          err instanceof Error && err.message
+            ? err.message
+            : "That file doesn't look like a valid backup.",
+        );
+      }
+    } finally {
+      setPpBusy(false);
+    }
+  }
+  function describeSummary(plainJson: string) {
+    const s = summarizeBackup(plainJson);
+    const when = s.exportedAt ? ` Made ${s.exportedAt.slice(0, 10)}.` : "";
+    return `Backup is readable: ${s.transactions} transactions, ${s.categories} categories.${when}`;
+  }
+  // "Check a backup file": confirms a file opens and shows what's in it,
+  // without touching the data on this device.
+  async function onCheck(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      showToast("That file doesn't look like a valid backup.");
+      return;
+    }
+    if (!isEncryptedBackup(text)) {
+      explainNotEncrypted(text);
+      return;
+    }
+    setPpError(null);
+    setPpJob({ kind: "check", text });
+  }
+  // Why a file can't be used: a readable (plain) backup vs. not a backup at all.
+  function explainNotEncrypted(text: string) {
+    try {
+      summarizeBackup(text);
+      showToast("This backup isn't encrypted. Money Mate restores only encrypted backups.");
+    } catch {
+      showToast("That file doesn't look like a valid backup.");
+    }
   }
   async function doExportCSV() {
     await tryExport(async () =>
@@ -255,9 +344,23 @@ export default function Settings({
       showToast("Couldn't export that file. Please try again.");
     }
   }
+  // Only passphrase-encrypted backups can be restored. Read the file first so
+  // a plain or unrelated file is explained before any "replace everything" prompt.
   async function onImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      showToast("That file doesn't look like a valid backup.");
+      return;
+    }
+    if (!isEncryptedBackup(text)) {
+      explainNotEncrypted(text);
+      return;
+    }
     const confirmed = await showConfirm({
       title: "Restore backup?",
       message: "This replaces every category, transaction, and recurring item currently on this device. This can't be undone.",
@@ -265,24 +368,10 @@ export default function Settings({
       cancelLabel: "Cancel",
       danger: true,
     });
-    if (!confirmed) {
-      e.target.value = "";
-      return;
-    }
-    try {
-      const text = await file.text();
-      await importFullBackup(text);
-      showToast("Backup restored.");
-      const s = await updateSettings({});
-      onSettingsChange(s);
-    } catch (err) {
-      showToast(
-        err instanceof Error && err.message
-          ? err.message
-          : "That file doesn't look like a valid backup.",
-      );
-    }
-    e.target.value = "";
+    if (!confirmed) return;
+    // The passphrase dialog finishes the restore.
+    setPpError(null);
+    setPpJob({ kind: "restore", text });
   }
   async function wipeAll() {
     const confirmed = await showConfirm({
@@ -705,9 +794,20 @@ export default function Settings({
             Last backup:{" "}
             <b>{describeBackupAge(settings.lastBackupAt, Date.now())}</b>
           </p>
-          <button className="btn secondary" onClick={doExportJSON}>
-            Export backup (.json)
+          <button
+            className="btn"
+            onClick={() => {
+              setPpError(null);
+              setPpJob({ kind: "export" });
+            }}
+          >
+            Export encrypted backup
           </button>
+          <p className="muted" style={{ fontSize: 13 }}>
+            Backups are encrypted with a passphrase you choose, so the file is
+            safe to keep in email or cloud storage. The CSV and dataset exports
+            below are plain and can be read by anyone who gets the file.
+          </p>
           <label htmlFor="import-file" className="btn secondary">
             Restore from backup
           </label>
@@ -718,6 +818,16 @@ export default function Settings({
             accept="application/json"
             onChange={onImport}
           />
+          {/* <label htmlFor="check-file" className="btn secondary">
+            Check a backup file
+          </label>
+          <input
+            id="check-file"
+            type="file"
+            className="sr-only"
+            accept="application/json"
+            onChange={onCheck}
+          /> */}
 
           <div className="danger-zone">
             <div className="danger-zone-label">Erase everything</div>
@@ -766,6 +876,22 @@ export default function Settings({
           </p>
         </div>
       </div>
+      {ppJob && (
+        <PassphraseDialog
+          mode={ppJob.kind === "export" ? "export" : "unlock"}
+          title={
+            ppJob.kind === "export"
+              ? "Encrypt this backup"
+              : ppJob.kind === "restore"
+                ? "Unlock backup to restore"
+                : "Unlock backup to check it"
+          }
+          busy={ppBusy}
+          error={ppError}
+          onSubmit={ppJob.kind === "export" ? doExportEncrypted : submitUnlock}
+          onCancel={() => setPpJob(null)}
+        />
+      )}
     </>
   );
 }

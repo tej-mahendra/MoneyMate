@@ -139,136 +139,64 @@ describe("Settings — Brackets list (no per-category flow toggle)", () => {
   });
 });
 
-describe("Settings — export/import backup, end to end through the real UI", () => {
-  it('a file exported via "Export backup" can be re-imported via "Restore from backup" and actually restores the data', async () => {
-    // Seed some real data, export it (the same function the "Export
-    // backup" button calls), wipe the device, then feed that exact file
-    // back in through the actual <input type="file"> the person taps —
-    // not calling importFullBackup() directly. If the wiring between the
-    // button and the function is broken, this is what would catch it.
+describe("Settings — restore accepts encrypted backups only", () => {
+  it("explains a plain (unencrypted) backup instead of restoring it, and asks nothing first", async () => {
+    const bracketId = await db.brackets.add({ name: "Expenditure", icon: "💳", color: "#7C93F0", kind: "spend" });
+    await db.categories.add({ name: "Rent", icon: "🏠", color: "#F0B94D", budget: 20000, bracketId });
     const { exportFullBackup } = await import("../lib/csv");
-    const bracketId = await db.brackets.add({
-      name: "Expenditure",
-      icon: "💳",
-      color: "#7C93F0",
-      kind: "spend",
-    });
-    const catId = await db.categories.add({
-      name: "Rent",
-      icon: "🏠",
-      color: "#F0B94D",
-      budget: 20000,
-      bracketId,
-    });
-    await db.transactions.add({
-      type: "expense",
-      amount: 5000,
-      categoryId: catId,
-      date: "2026-01-15",
-      createdAt: Date.now(),
-      note: "January rent",
-    });
-
-    const backupJson = await exportFullBackup();
-
-    // Wipe, simulating "switched to a new phone" / a fresh install.
-    await db.transactions.clear();
-    await db.categories.clear();
-    await db.brackets.clear();
-    expect(await db.brackets.count()).toBe(0);
+    const plain = await exportFullBackup();
 
     const user = userEvent.setup();
     renderSettingsWithToast();
-
-    const backupFile = new File([backupJson], "moneymate-backup.json", {
-      type: "application/json",
-    });
-    const fileInput = screen.getByLabelText(
-      "Restore from backup",
-    ) as HTMLInputElement;
-
-    // The real handler uses the custom showConfirm() from the UI store
-    // instead of window.confirm() — mock it to auto-accept.
-    const { useUIStore } = await import("../store/useUIStore");
+    const confirm = vi.fn(async () => true);
     const originalShowConfirm = useUIStore.getState().showConfirm;
-    useUIStore.setState({ showConfirm: async () => true });
-    try {
-      await user.upload(fileInput, backupFile);
-    } finally {
-      useUIStore.setState({ showConfirm: originalShowConfirm });
-    }
-
-    await screen.findByText("Backup restored.");
-
-    const restoredBrackets = await db.brackets.toArray();
-    const restoredCategories = await db.categories.toArray();
-    const restoredTx = await db.transactions.toArray();
-    expect(restoredBrackets).toHaveLength(1);
-    expect(restoredBrackets[0].name).toBe("Expenditure");
-    expect(restoredCategories).toHaveLength(1);
-    expect(restoredCategories[0].name).toBe("Rent");
-    expect(restoredTx).toHaveLength(1);
-    expect(restoredTx[0].amount).toBe(5000);
-    expect(restoredTx[0].note).toBe("January rent");
-  });
-
-  it("shows an error toast instead of silently failing when the chosen file isn't a valid backup", async () => {
-    const user = userEvent.setup();
-    renderSettingsWithToast();
-
-    const badFile = new File(["not a backup at all"], "notes.json", {
-      type: "application/json",
-    });
-    const fileInput = screen.getByLabelText(
-      "Restore from backup",
-    ) as HTMLInputElement;
-
-    const originalShowConfirm = useUIStore.getState().showConfirm;
-    useUIStore.setState({ showConfirm: async () => true });
-    try {
-      await user.upload(fileInput, badFile);
-    } finally {
-      useUIStore.setState({ showConfirm: originalShowConfirm });
-    }
-
-    expect(await screen.findByText("Invalid backup file")).toBeInTheDocument();
-  });
-
-  it('does nothing if the person cancels the "this replaces everything" confirmation', async () => {
-    const bracketId = await db.brackets.add({
-      name: "Expenditure",
-      icon: "💳",
-      color: "#7C93F0",
-      kind: "spend",
-    });
-    await db.categories.add({
-      name: "Rent",
-      icon: "🏠",
-      color: "#F0B94D",
-      budget: 20000,
-      bracketId,
-    });
-
-    const { exportFullBackup } = await import("../lib/csv");
-    const backupJson = await exportFullBackup();
-
-    const user = userEvent.setup();
-    renderSettings();
-
-    const fileInput = screen.getByLabelText(
-      "Restore from backup",
-    ) as HTMLInputElement;
-    const originalShowConfirm = useUIStore.getState().showConfirm;
-    useUIStore.setState({ showConfirm: async () => false }); // person taps Cancel
+    useUIStore.setState({ showConfirm: confirm });
     try {
       await user.upload(
-        fileInput,
-        new File([backupJson], "backup.json", { type: "application/json" }),
+        screen.getByLabelText("Restore from backup") as HTMLInputElement,
+        new File([plain], "old.json", { type: "application/json" }),
       );
     } finally {
       useUIStore.setState({ showConfirm: originalShowConfirm });
     }
 
+    expect(await screen.findByText(/isn't encrypted/)).toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Passphrase")).not.toBeInTheDocument();
+    expect(await db.categories.count()).toBe(1); // untouched
+  });
+
+  it("shows an error toast when the chosen file isn't a backup at all", async () => {
+    const user = userEvent.setup();
+    renderSettingsWithToast();
+    await user.upload(
+      screen.getByLabelText("Restore from backup") as HTMLInputElement,
+      new File(["not a backup at all"], "notes.json", { type: "application/json" }),
+    );
+    expect(await screen.findByText("That file doesn't look like a valid backup.")).toBeInTheDocument();
+  });
+
+  it('does nothing if the person cancels the "this replaces everything" confirmation', async () => {
+    const bracketId = await db.brackets.add({ name: "Expenditure", icon: "💳", color: "#7C93F0", kind: "spend" });
+    await db.categories.add({ name: "Rent", icon: "🏠", color: "#F0B94D", budget: 20000, bracketId });
+    const { exportFullBackup } = await import("../lib/csv");
+    const { encryptBackup } = await import("../lib/backupCrypto");
+    const encrypted = await encryptBackup(await exportFullBackup(), "correct horse", { iterations: 100_000 });
+
+    const user = userEvent.setup();
+    renderSettings();
+    const originalShowConfirm = useUIStore.getState().showConfirm;
+    useUIStore.setState({ showConfirm: async () => false }); // person taps Cancel
+    try {
+      await user.upload(
+        screen.getByLabelText("Restore from backup") as HTMLInputElement,
+        new File([encrypted], "backup.encrypted.json", { type: "application/json" }),
+      );
+    } finally {
+      useUIStore.setState({ showConfirm: originalShowConfirm });
+    }
+
+    expect(screen.queryByLabelText("Passphrase")).not.toBeInTheDocument();
     expect(screen.queryByText("Backup restored.")).not.toBeInTheDocument();
     expect(await db.categories.count()).toBe(1); // untouched
   });
@@ -356,7 +284,7 @@ describe("Settings — backup tracking", () => {
     expect(await screen.findByText("Never")).toBeInTheDocument();
   });
 
-  it("records the time of a successful export and tells the app", async () => {
+  it("records the time of a successful (encrypted) export and tells the app", async () => {
     URL.createObjectURL = vi.fn(() => "blob:test");
     URL.revokeObjectURL = vi.fn();
     const onSettingsChange = vi.fn();
@@ -368,7 +296,10 @@ describe("Settings — backup tracking", () => {
       </MemoryRouter>,
     );
 
-    await user.click(await screen.findByText("Export backup (.json)"));
+    await user.click(await screen.findByText("Export encrypted backup"));
+    await user.type(screen.getByLabelText("Passphrase"), "correct horse");
+    await user.type(screen.getByLabelText("Repeat passphrase"), "correct horse");
+    await user.click(screen.getByRole("button", { name: "Encrypt & export" }));
 
     await vi.waitFor(async () => {
       const saved = await db.settings.get(1);
@@ -377,6 +308,12 @@ describe("Settings — backup tracking", () => {
     expect(onSettingsChange).toHaveBeenCalledWith(
       expect.objectContaining({ lastBackupAt: expect.any(Number) }),
     );
+  }, 20000);
+
+  it("no longer offers a plain, unencrypted backup export", async () => {
+    renderSettings();
+    await screen.findByText("Export encrypted backup");
+    expect(screen.queryByText("Export backup (.json)")).not.toBeInTheDocument();
   });
 
   it("shows how long ago the last backup was", async () => {
@@ -389,5 +326,145 @@ describe("Settings — backup tracking", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("5 days ago")).toBeInTheDocument();
+  });
+});
+
+describe("Settings — encrypted backups", () => {
+  async function seedData() {
+    const bracketId = await db.brackets.add({ name: "Expenditure", icon: "💳", color: "#7C93F0", kind: "spend" });
+    const catId = await db.categories.add({ name: "Rent", icon: "🏠", color: "#F0B94D", budget: 20000, bracketId });
+    await db.transactions.add({ type: "expense", amount: 5000, categoryId: catId, date: "2026-01-15", createdAt: Date.now(), note: "January rent" });
+  }
+  // jsdom's Blob isn't readable by Node's Response, so use FileReader.
+  function blobText(b: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsText(b);
+    });
+  }
+  // Runs the real UI: button → dialog → passphrase → file handed to the
+  // download path. Returns the text of the file that would be saved.
+  async function exportEncrypted(user: ReturnType<typeof userEvent.setup>, pass: string) {
+    let captured: Blob | null = null;
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      captured = b;
+      return "blob:test";
+    });
+    URL.revokeObjectURL = vi.fn();
+    await user.click(await screen.findByText("Export encrypted backup"));
+    await user.type(screen.getByLabelText("Passphrase"), pass);
+    await user.type(screen.getByLabelText("Repeat passphrase"), pass);
+    await user.click(screen.getByRole("button", { name: "Encrypt & export" }));
+    await vi.waitFor(() => expect(captured).not.toBeNull());
+    return blobText(captured as unknown as Blob);
+  }
+
+  it("exports a file that is encrypted (no readable data) and records the backup time", async () => {
+    await seedData();
+    const user = userEvent.setup();
+    const onSettingsChange = vi.fn();
+    const before = Date.now();
+    render(
+      <MemoryRouter>
+        <Settings settings={baseSettings} onSettingsChange={onSettingsChange} />
+      </MemoryRouter>,
+    );
+    const text = await exportEncrypted(user, "correct horse");
+    expect(text).toContain("moneymate-encrypted-backup");
+    expect(text).not.toContain("Rent");
+    expect(text).not.toContain("January rent");
+    await vi.waitFor(async () => {
+      expect((await db.settings.get(1))?.lastBackupAt).toBeGreaterThanOrEqual(before);
+    });
+  }, 20000);
+
+  it("won't export until the passphrase is long enough and typed the same twice", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await user.click(await screen.findByText("Export encrypted backup"));
+    const go = screen.getByRole("button", { name: "Encrypt & export" });
+    expect(go).toBeDisabled();
+    await user.type(screen.getByLabelText("Passphrase"), "short");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/at least 8/);
+    expect(go).toBeDisabled();
+    await user.clear(screen.getByLabelText("Passphrase"));
+    await user.type(screen.getByLabelText("Passphrase"), "correct horse");
+    await user.type(screen.getByLabelText("Repeat passphrase"), "correct hors");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/don't match/);
+    expect(go).toBeDisabled();
+    await user.type(screen.getByLabelText("Repeat passphrase"), "e");
+    expect(go).toBeEnabled();
+  });
+
+  it("restores an encrypted backup with the right passphrase; a wrong one changes nothing", async () => {
+    await seedData();
+    const user = userEvent.setup();
+    const first = render(
+      <MemoryRouter>
+        <Settings settings={baseSettings} onSettingsChange={() => {}} />
+      </MemoryRouter>,
+    );
+    const text = await exportEncrypted(user, "correct horse");
+    first.unmount();
+
+    // New phone: everything gone.
+    await db.transactions.clear();
+    await db.categories.clear();
+    await db.brackets.clear();
+
+    renderSettingsWithToast();
+    const file = new File([text], "moneymate-backup.encrypted.json", { type: "application/json" });
+    const originalShowConfirm = useUIStore.getState().showConfirm;
+    useUIStore.setState({ showConfirm: async () => true });
+    try {
+      await user.upload(screen.getByLabelText("Restore from backup") as HTMLInputElement, file);
+    } finally {
+      useUIStore.setState({ showConfirm: originalShowConfirm });
+    }
+
+    await user.type(await screen.findByLabelText("Passphrase"), "wrong horse!");
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Wrong passphrase/);
+    expect(await db.transactions.count()).toBe(0); // nothing restored
+
+    await user.clear(screen.getByLabelText("Passphrase"));
+    await user.type(screen.getByLabelText("Passphrase"), "correct horse");
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByText("Backup restored.");
+    const tx = await db.transactions.toArray();
+    expect(tx).toHaveLength(1);
+    expect(tx[0].note).toBe("January rent");
+    expect((await db.categories.toArray())[0].name).toBe("Rent");
+  }, 30000);
+
+  it('"Check a backup file" reports what is inside without changing this device', async () => {
+    await seedData();
+    const user = userEvent.setup();
+    const first = render(
+      <MemoryRouter>
+        <Settings settings={baseSettings} onSettingsChange={() => {}} />
+      </MemoryRouter>,
+    );
+    const text = await exportEncrypted(user, "correct horse");
+    first.unmount();
+    await db.transactions.clear();
+
+    renderSettingsWithToast();
+    const file = new File([text], "b.encrypted.json", { type: "application/json" });
+    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
+    await user.type(await screen.findByLabelText("Passphrase"), "correct horse");
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    expect(await screen.findByText(/Backup is readable: 1 transactions, 1 categories/)).toBeInTheDocument();
+    expect(await db.transactions.count()).toBe(0); // check never restores
+  }, 30000);
+
+  it("tells you when the file to check isn't a backup", async () => {
+    const user = userEvent.setup();
+    renderSettingsWithToast();
+    const file = new File(["hello"], "x.json", { type: "application/json" });
+    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
+    expect(await screen.findByText(/doesn't look like a valid backup/)).toBeInTheDocument();
   });
 });

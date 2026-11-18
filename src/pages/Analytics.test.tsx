@@ -340,7 +340,8 @@ describe('Analytics — whole-month picture and logged months only', () => {
     await db.transactions.add({ type: 'expense', amount: 12000, categoryId: food, date: `${cur}-02`, createdAt: 0 });
     await db.transactions.add({ type: 'expense', amount: 8000, categoryId: fund, date: `${cur}-03`, createdAt: 0 });
     renderAnalytics();
-    const card = (await screen.findByTestId('month-snapshot'));
+    await screen.findAllByText(fmtMoney(30000, '₹')); // data has loaded
+    const card = screen.getByTestId('month-snapshot');
     expect(within(card).getByText(fmtMoney(50000, '₹'))).toBeInTheDocument();
     expect(within(card).getAllByText(fmtMoney(12000, '₹')).length).toBeGreaterThan(0);
     expect(within(card).getAllByText(fmtMoney(8000, '₹')).length).toBeGreaterThan(0);
@@ -368,9 +369,11 @@ describe('Analytics — snapshot blocks open their entries', () => {
         </Routes>
       </MemoryRouter>,
     );
-    const card = await screen.findByTestId('month-snapshot');
+    // The card exists before the data loads, so wait for the block itself.
+    const incomeBlock = await screen.findByRole('button', { name: /^Income/ });
+    const card = screen.getByTestId('month-snapshot');
     expect(within(card).queryByRole('button', { name: /Left over/ })).not.toBeInTheDocument();
-    await userEvent.setup().click(within(card).getByRole('button', { name: /^Income/ }));
+    await userEvent.setup().click(incomeBlock);
     expect(await screen.findByTestId('where')).toHaveTextContent(`/history?month=${cur}&kind=income`);
   });
 });

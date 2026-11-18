@@ -203,7 +203,8 @@ describe('History — whole-month snapshot, logged months, closed-month changes'
     await seedMixed(cur);
     const user = userEvent.setup();
     renderHistory();
-    const card = await screen.findByTestId('month-snapshot');
+    await screen.findAllByText(fmtMoney(36000, '₹')); // data has loaded
+    const card = screen.getByTestId('month-snapshot');
     expect(within(card).getAllByText(fmtMoney(60000, '₹')).length).toBeGreaterThan(0);
     expect(within(card).getAllByText(fmtMoney(15000, '₹')).length).toBeGreaterThan(0);
     expect(within(card).getAllByText(fmtMoney(9000, '₹')).length).toBeGreaterThan(0);
@@ -269,7 +270,8 @@ describe('History — snapshot blocks filter the list', () => {
     await db.transactions.add({ type: 'expense', amount: 9000, categoryId: fund, date: `${cur}-03`, createdAt: 3, merchant: 'Bank' });
     const user = userEvent.setup();
     renderHistory();
-    const card = await screen.findByTestId('month-snapshot');
+    await screen.findByRole('button', { name: /^Saved & invested/ }); // data has loaded
+    const card = screen.getByTestId('month-snapshot');
 
     await user.click(within(card).getByRole('button', { name: /^Saved & invested/ }));
     await waitFor(() => expect(screen.queryByText(/Grocer/)).not.toBeInTheDocument());
