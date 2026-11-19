@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { useUpdateOnNavigate } from "./lib/useUpdateOnNavigate";
 import {
   HashRouter,
   Routes,
@@ -61,6 +62,8 @@ function AnimatedRoutes({
   onSettingsChange: (s: SettingsType) => void;
 }) {
   const location = useLocation();
+  // Switch to a newly deployed version at the next screen change.
+  useUpdateOnNavigate();
   const navigate = useNavigate();
 
   // If the app was just launched from the widget's "+" button, jump

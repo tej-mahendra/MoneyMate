@@ -34,6 +34,14 @@ export default class ErrorBoundary extends Component<Props, State> {
   // choice when the error might have been transient (a bad IndexedDB read
   // that would succeed on retry, a one-off render race).
   handleRetry = () => {
+    // A screen file that failed to load stays failed for the life of the
+    // page (the browser remembers the failure), so retrying in place can
+    // never work — a real reload is the only fix. It also fetches the new
+    // version. This is the person's own tap, so it skips the loop guard.
+    if (isChunkLoadError(this.state.error)) {
+      window.location.reload();
+      return;
+    }
     this.setState({ error: null, showDetails: false });
   };
 

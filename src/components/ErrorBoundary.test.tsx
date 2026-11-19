@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { axe, toHaveNoViolations } from "jest-axe";
@@ -155,5 +156,33 @@ describe("ErrorBoundary — new version deployed while the page was open", () =>
     );
     expect(reload).not.toHaveBeenCalled();
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+  });
+});
+
+describe("ErrorBoundary — Try again after a missing screen file", () => {
+  const reload = vi.fn();
+  beforeEach(() => {
+    reload.mockClear();
+    sessionStorage.setItem("mm_stale_reload_at", String(Date.now())); // auto-reload already used
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("location", { ...window.location, reload });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+  function StaleChunk(): never {
+    throw new Error("Failed to fetch dynamically imported module: /assets/Settings-old.js");
+  }
+
+  it("really reloads the page — retrying in place can't work", async () => {
+    const user = userEvent.setup();
+    render(
+      <ErrorBoundary>
+        <StaleChunk />
+      </ErrorBoundary>,
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

@@ -32,6 +32,11 @@ import { describeBackupAge } from "../lib/backupNudge";
 import IconPicker from "../components/IconPicker";
 import PassphraseDialog from "../components/PassphraseDialog";
 import {
+  DEFAULT_OPTIONS,
+  exportAnalyticsZip,
+  type AnalyticsOptions,
+} from "../lib/analyticsExport";
+import {
   BackupPassphraseError,
   decryptBackup,
   encryptBackup,
@@ -193,11 +198,14 @@ export default function Settings({
   // Passphrase dialog for encrypted backups: one dialog, three jobs.
   type PassphraseJob =
     | { kind: "export" }
-    | { kind: "restore"; text: string };
-
+    | { kind: "restore"; text: string }
+    | { kind: "check"; text: string };
   const [ppJob, setPpJob] = useState<PassphraseJob | null>(null);
   const [ppError, setPpError] = useState<string | null>(null);
   const [ppBusy, setPpBusy] = useState(false);
+
+  // Analytics bundle (Power BI / ML): what goes into the plain-text zip.
+  const [analyticsOpts, setAnalyticsOpts] = useState<AnalyticsOptions>(DEFAULT_OPTIONS);
 
   // Data management
   async function doExportEncrypted(passphrase: string) {
@@ -222,45 +230,63 @@ export default function Settings({
       setPpJob(null);
     }
   }
-// Unlocks an encrypted file, then either restores it or just checks it.
-async function submitUnlock(passphrase: string) {
-  if (!ppJob || ppJob.kind !== "restore") return;
-
-  setPpBusy(true);
-  setPpError(null);
-
-  try {
-    const plain = await decryptBackup(ppJob.text, passphrase);
-
-    await importFullBackup(plain);
-
-    showToast("Backup restored.");
-
-    const s = await updateSettings({});
-    onSettingsChange(s);
-
-    setPpJob(null);
-  } catch (err) {
-    if (err instanceof BackupPassphraseError) {
-      // Keep the dialog open so the user can retry.
-      // No data should have been modified.
-      setPpError(
-        "Wrong passphrase, or the file was changed. Nothing was restored.",
-      );
-    } else {
+  // Unlocks an encrypted file, then either restores it or just checks it.
+  async function submitUnlock(passphrase: string) {
+    if (!ppJob || ppJob.kind === "export") return;
+    setPpBusy(true);
+    setPpError(null);
+    try {
+      const plain = await decryptBackup(ppJob.text, passphrase);
+      if (ppJob.kind === "check") {
+        showToast(describeSummary(plain));
+      } else {
+        await importFullBackup(plain);
+        showToast("Backup restored.");
+        const s = await updateSettings({});
+        onSettingsChange(s);
+      }
       setPpJob(null);
-
-      showToast(
-        err instanceof Error && err.message
-          ? err.message
-          : "That file doesn't look like a valid backup.",
-      );
+    } catch (err) {
+      if (err instanceof BackupPassphraseError) {
+        // Stay open so they can retry; nothing was changed.
+        setPpError("Wrong passphrase, or the file was changed. Nothing was restored.");
+      } else {
+        setPpJob(null);
+        showToast(
+          err instanceof Error && err.message
+            ? err.message
+            : "That file doesn't look like a valid backup.",
+        );
+      }
+    } finally {
+      setPpBusy(false);
     }
-  } finally {
-    setPpBusy(false);
   }
-}
-
+  function describeSummary(plainJson: string) {
+    const s = summarizeBackup(plainJson);
+    const when = s.exportedAt ? ` Made ${s.exportedAt.slice(0, 10)}.` : "";
+    return `Backup is readable: ${s.transactions} transactions, ${s.categories} categories.${when}`;
+  }
+  // "Check a backup file": confirms a file opens and shows what's in it,
+  // without touching the data on this device.
+  async function onCheck(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      showToast("That file doesn't look like a valid backup.");
+      return;
+    }
+    if (!isEncryptedBackup(text)) {
+      explainNotEncrypted(text);
+      return;
+    }
+    setPpError(null);
+    setPpJob({ kind: "check", text });
+  }
   // Why a file can't be used: a readable (plain) backup vs. not a backup at all.
   function explainNotEncrypted(text: string) {
     try {
@@ -269,6 +295,18 @@ async function submitUnlock(passphrase: string) {
     } catch {
       showToast("That file doesn't look like a valid backup.");
     }
+  }
+  async function doExportAnalytics() {
+    // The only unencrypted export of everything at once — say so before saving.
+    const ok = await showConfirm({
+      title: "Export unencrypted analytics?",
+      message:
+        "This zip is plain text: anyone who gets the file can read your finances. Keep it on your own PC, not in email or a work account, and delete old copies.",
+      confirmLabel: "Export",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    await tryExport(() => exportAnalyticsZip(analyticsOpts));
   }
   async function doExportCSV() {
     await tryExport(async () =>
@@ -800,6 +838,16 @@ async function submitUnlock(passphrase: string) {
             accept="application/json"
             onChange={onImport}
           />
+          <label htmlFor="check-file" className="btn secondary">
+            Check a backup file
+          </label>
+          <input
+            id="check-file"
+            type="file"
+            className="sr-only"
+            accept="application/json"
+            onChange={onCheck}
+          />
 
           <div className="danger-zone">
             <div className="danger-zone-label">Erase everything</div>
@@ -811,6 +859,36 @@ async function submitUnlock(passphrase: string) {
 
         <div className="card">
           <h2>Analysis exports</h2>
+          <h3 style={{ margin: "4px 0" }}>Analytics bundle (.zip)</h3>
+          <p className="muted">
+            One zip for Power BI Desktop and Python/ML: transactions, a date
+            table (with the Indian financial year), categories, month-by-month
+            budget vs. actual, monthly totals, splits and a data dictionary.
+            Savings are kept separate from spending.
+          </p>
+          {(
+            [
+              ["includeMerchants", "Include merchant names"],
+              ["includeNotes", "Include notes"],
+              ["realPersonNames", "Use real names for split people (otherwise P1, P2…)"],
+            ] as const
+          ).map(([key, label]) => (
+            <label
+              key={key}
+              style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14, margin: "6px 0" }}
+            >
+              <input
+                type="checkbox"
+                checked={analyticsOpts[key]}
+                onChange={(e) => setAnalyticsOpts({ ...analyticsOpts, [key]: e.target.checked })}
+              />
+              {label}
+            </label>
+          ))}
+          <button className="btn" onClick={doExportAnalytics}>
+            Export analytics bundle (.zip)
+          </button>
+          <h3 style={{ margin: "20px 0 4px" }}>Single files</h3>
           <p className="muted">
             Built for Power BI, Excel, or a Python/pandas notebook — every
             export is a clean flat table with precomputed date fields (weekday,
@@ -854,7 +932,9 @@ async function submitUnlock(passphrase: string) {
           title={
             ppJob.kind === "export"
               ? "Encrypt this backup"
-              : "Unlock backup to restore"
+              : ppJob.kind === "restore"
+                ? "Unlock backup to restore"
+                : "Unlock backup to check it"
           }
           busy={ppBusy}
           error={ppError}
