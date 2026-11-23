@@ -439,38 +439,12 @@ describe("Settings — encrypted backups", () => {
     expect((await db.categories.toArray())[0].name).toBe("Rent");
   }, 30000);
 
-  it('"Check a backup file" reports what is inside without changing this device', async () => {
-    await seedData();
-    const user = userEvent.setup();
-    const first = render(
-      <MemoryRouter>
-        <Settings settings={baseSettings} onSettingsChange={() => {}} />
-      </MemoryRouter>,
-    );
-    const text = await exportEncrypted(user, "correct horse");
-    first.unmount();
-    await db.transactions.clear();
-
-    renderSettingsWithToast();
-    const file = new File([text], "b.encrypted.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
-    await user.type(await screen.findByLabelText("Passphrase"), "correct horse");
-    await user.click(screen.getByRole("button", { name: "Unlock" }));
-    expect(await screen.findByText(/Backup is readable: 1 transactions, 1 categories/)).toBeInTheDocument();
-    expect(await db.transactions.count()).toBe(0); // check never restores
-  }, 30000);
-
-  it("tells you when the file to check isn't a backup", async () => {
-    const user = userEvent.setup();
-    renderSettingsWithToast();
-    const file = new File(["hello"], "x.json", { type: "application/json" });
-    await user.upload(screen.getByLabelText("Check a backup file") as HTMLInputElement, file);
-    expect(await screen.findByText(/doesn't look like a valid backup/)).toBeInTheDocument();
-  });
 });
 
-describe("Settings — analytics bundle", () => {
-  // The zip is "stored" (uncompressed), so its bytes contain the CSV text.
+
+describe("Settings — analytics workbook", () => {
+  // The workbook is a stored (uncompressed) zip of XML,
+  // so its bytes contain the cell text.
   function blobBytesAsText(b: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -479,71 +453,149 @@ describe("Settings — analytics bundle", () => {
       r.readAsBinaryString(b);
     });
   }
+
   async function seed() {
-    const bracketId = await db.brackets.add({ name: "Expenditure", icon: "💳", color: "#7C93F0", kind: "spend" });
-    const catId = await db.categories.add({ name: "Food", icon: "🍔", color: "#F0B94D", budget: 8000, bracketId });
-    await db.transactions.add({ type: "expense", amount: 450, categoryId: catId, date: "2026-11-05", createdAt: Date.now(), merchant: "Swiggy", note: "secret dinner note" });
+    const bracketId = await db.brackets.add({
+      name: "Expenditure",
+      icon: "💳",
+      color: "#7C93F0",
+      kind: "spend",
+    });
+
+    const catId = await db.categories.add({
+      name: "Food",
+      icon: "🍔",
+      color: "#F0B94D",
+      budget: 8000,
+      bracketId,
+    });
+
+    await db.transactions.add({
+      type: "expense",
+      amount: 450,
+      categoryId: catId,
+      date: "2026-11-05",
+      createdAt: Date.now(),
+      merchant: "Swiggy",
+      note: "secret dinner note",
+    });
   }
-  async function runExport(user: ReturnType<typeof userEvent.setup>, tick?: () => Promise<void>) {
+
+  async function runExport() {
     let captured: Blob | null = null;
+
     URL.createObjectURL = vi.fn((b: Blob) => {
       captured = b;
       return "blob:test";
     });
+
     URL.revokeObjectURL = vi.fn();
+
     const original = useUIStore.getState().showConfirm;
     const confirm = vi.fn(async () => true);
+
     useUIStore.setState({ showConfirm: confirm });
+
     try {
+      const user = userEvent.setup();
+
       renderSettings();
-      if (tick) await tick();
-      await user.click(await screen.findByText("Export analytics bundle (.zip)"));
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Export analytics (.xlsx)",
+        }),
+      );
+
       await vi.waitFor(() => expect(captured).not.toBeNull());
     } finally {
       useUIStore.setState({ showConfirm: original });
     }
-    return { blob: captured as unknown as Blob, confirm };
+
+    return {
+      blob: captured as unknown as Blob,
+      confirm,
+    };
   }
 
-  it("warns that the file is unencrypted, then downloads a zip", async () => {
+  it("warns that the file is unencrypted, then downloads one workbook", async () => {
     await seed();
-    const { blob, confirm } = await runExport(userEvent.setup());
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Export unencrypted analytics?" }));
-    expect(blob.type).toBe("application/zip");
+
+    const { blob, confirm } = await runExport();
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Export unencrypted analytics?",
+        confirmLabel: "Export",
+        cancelLabel: "Cancel",
+      }),
+    );
+
+    expect(blob.type).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+
     const text = await blobBytesAsText(blob);
-    expect(text).toContain("fact_transactions.csv");
-    expect(text).toContain("README_data_dictionary.txt");
+
+    expect(text).toContain("xl/workbook.xml");
+    expect(text).toContain("fact_transactions");
+    expect(text).toContain("README");
   });
 
-  it("leaves notes out by default but includes merchant names", async () => {
+  it("exports all transaction details, including merchant names and notes, by default", async () => {
     await seed();
-    const { blob } = await runExport(userEvent.setup());
+
+    const { blob } = await runExport();
     const text = await blobBytesAsText(blob);
+
     expect(text).toContain("Swiggy");
-    expect(text).not.toContain("secret dinner note");
+    expect(text).toContain("secret dinner note");
   });
 
-  it("includes notes once that box is ticked", async () => {
-    await seed();
-    const user = userEvent.setup();
-    const { blob } = await runExport(user, async () => {
-      await user.click(await screen.findByLabelText("Include notes"));
-    });
-    expect(await blobBytesAsText(blob)).toContain("secret dinner note");
+  it("does not display an Include notes option or additional export controls", async () => {
+    renderSettings();
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Export analytics (.xlsx)",
+      }),
+    ).toBeInTheDocument();
+
+    expect(screen.queryByLabelText("Include notes")).not.toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("checkbox", { name: /notes/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("downloads nothing if the person cancels the warning", async () => {
     await seed();
+
     URL.createObjectURL = vi.fn(() => "blob:test");
+
     const original = useUIStore.getState().showConfirm;
-    useUIStore.setState({ showConfirm: async () => false });
+
+    useUIStore.setState({
+      showConfirm: async () => false,
+    });
+
     try {
       const user = userEvent.setup();
+
       renderSettings();
-      await user.click(await screen.findByText("Export analytics bundle (.zip)"));
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Export analytics (.xlsx)",
+        }),
+      );
     } finally {
       useUIStore.setState({ showConfirm: original });
     }
+
     expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 });
+

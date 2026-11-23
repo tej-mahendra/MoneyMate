@@ -21,6 +21,7 @@ import Overview from "./pages/Overview";
 import BottomNav from "./components/BottomNav";
 import Toast from "./components/Toast";
 import ConfirmDialog from "./components/ConfirmDialog";
+import UpdatePrompt from "./components/UpdatePrompt";
 import ErrorBoundary from "./components/ErrorBoundary";
 import BudgetHistoryKeeper from "./components/BudgetHistoryKeeper";
 
@@ -263,6 +264,7 @@ export default function App() {
         <Toast />
         <BudgetHistoryKeeper />
         <ConfirmDialog />
+        <UpdatePrompt settings={settings} onSettingsChange={setSettings} />
       </div>
     </HashRouter>
   );

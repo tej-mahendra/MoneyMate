@@ -11,7 +11,7 @@ import { addMonths, daysInMonth, isoWeek, monthKey, todayISO } from "./format";
 import { budgetForMonth } from "./monthReport";
 import { buildMonthSnapshot } from "./monthSnapshot";
 import { SCHEMA_VERSION } from "./csv";
-import { makeZip } from "./zip";
+import { makeWorkbook, type Sheet } from "./xlsx";
 import { downloadBinary } from "./downloadBinary";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -22,20 +22,6 @@ import { downloadBinary } from "./downloadBinary";
 // ─────────────────────────────────────────────────────────────────────────
 
 export const ANALYTICS_SCHEMA_VERSION = 1;
-
-export interface AnalyticsOptions {
-  /** Free-text notes are the most personal field — off unless asked for. */
-  includeNotes: boolean;
-  /** Merchant names drive categorisation models; on by default. */
-  includeMerchants: boolean;
-  /** Real names of people in split expenses; off → P1, P2, … */
-  realPersonNames: boolean;
-}
-export const DEFAULT_OPTIONS: AnalyticsOptions = {
-  includeNotes: false,
-  includeMerchants: true,
-  realPersonNames: false,
-};
 
 export interface AnalyticsInput {
   transactions: Transaction[];
@@ -83,7 +69,7 @@ export const TABLES: Record<string, TableDef> = {
       ["IsRecurring", "true when generated from a recurring item."],
       ["EntryLagDays", "Days between the transaction date and when it was logged. >0 = logged afterwards, <0 = scheduled ahead."],
       ["Tags", "Tags joined with |."],
-      ["Notes", "Free text. Empty unless notes were included in the export."],
+      ["Notes", "Free-text transaction notes, included in the export."],
     ],
   },
   dim_date: {
@@ -165,7 +151,7 @@ export const TABLES: Record<string, TableDef> = {
     columns: [
       ["SplitId", "Unique id."],
       ["TransactionId", "Relates to fact_transactions[TransactionId]."],
-      ["Person", "P1, P2, … (stable across exports) — or the real name if you chose that."],
+      ["Person", "Name of the person involved in the split expense."],
       ["AmountOwed", "What this person owes for that expense."],
       ["AmountSettled", "What they have paid back."],
       ["AmountOutstanding", "Owed − Settled."],
@@ -178,16 +164,16 @@ export const TABLES: Record<string, TableDef> = {
     grain: "Key/value facts about this export.",
     columns: [
       ["Key", "Name of the fact."],
-      ["Value", "Its value (ExportedAt, AsOfDate, Currency, schema versions, options used)."],
+      ["Value", "Its value (ExportedAt, AsOfDate, Currency, schema versions and included data)."],
     ],
   },
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Spreadsheet safety: a text cell that starts with = + - @ is read as a
- *  formula by Excel. A leading apostrophe makes it literal. Power BI and
- *  Python ignore formulas, so only free-text columns are touched. */
+/** CSV only: a text cell that starts with = + - @ is read as a formula when a
+ *  CSV is opened in Excel. A leading apostrophe makes it literal. (The .xlsx
+ *  export stores text as text, so it needs no such prefix.) */
 function safe(v: string): string {
   return /^[=+\-@]/.test(v) ? "'" + v : v;
 }
@@ -197,7 +183,7 @@ function toCSV(def: TableDef, rows: Cell[][]): string {
   return (
     "\uFEFF" +
     Papa.unparse(
-      { fields: def.columns.map((c) => c[0]), data: rows.map((r) => r.map((c) => (typeof c === "boolean" ? String(c) : c))) },
+      { fields: def.columns.map((c) => c[0]), data: rows.map((r) => r.map((c) => (typeof c === "boolean" ? String(c) : typeof c === "string" ? safe(c) : c))) },
       { newline: "\r\n" },
     )
   );
@@ -224,10 +210,8 @@ export function fiscalOf(month: number, year: number) {
   };
 }
 
-export function buildAnalyticsFiles(
-  input: AnalyticsInput,
-  options: AnalyticsOptions = DEFAULT_OPTIONS,
-): { name: string; content: string }[] {
+/** The tables themselves — raw values, shared by the workbook and CSV renderers. */
+export function buildTables(input: AnalyticsInput): Record<string, Cell[][]> {
   const { transactions, categories, brackets, splitShares, budgetHistory, today } = input;
   const curMonth = monthKey(today);
   const bracketById = new Map(brackets.map((b) => [b.id!, b]));
@@ -242,14 +226,6 @@ export function buildAnalyticsFiles(
     return f === "Saving" ? "Saving" : "Spend";
   };
 
-  // People → P1, P2… in the order they first appeared, so labels stay the
-  // same from one export to the next as long as history isn't deleted.
-  const sharesSorted = splitShares.slice().sort((a, b) => a.createdAt - b.createdAt || (a.id ?? 0) - (b.id ?? 0));
-  const personLabel = new Map<string, string>();
-  for (const s of sharesSorted) {
-    const key = s.personName.trim().toLowerCase();
-    if (!personLabel.has(key)) personLabel.set(key, `P${personLabel.size + 1}`);
-  }
   const owedByTx = new Map<number, number>();
   for (const s of splitShares) owedByTx.set(s.transactionId, (owedByTx.get(s.transactionId) ?? 0) + s.amountOwed);
 
@@ -261,7 +237,7 @@ export function buildAnalyticsFiles(
   const factTx: Cell[][] = txs.map((t) => {
     const flow = flowOfTx(t);
     const owed = t.type === "expense" ? owedByTx.get(t.id!) ?? 0 : 0;
-    const merchantRaw = options.includeMerchants ? t.merchant ?? "" : "";
+    const merchantRaw = t.merchant ?? "";
     const clean = merchantRaw.trim().toLowerCase().replace(/\s+/g, " ");
     return [
       t.id!,
@@ -273,13 +249,13 @@ export function buildAnalyticsFiles(
       flow === "Income" ? round2(t.amount) : -round2(t.amount),
       owed > 0,
       round2(t.amount + owed),
-      safe(merchantRaw),
-      safe(clean),
+      merchantRaw,
+      clean,
       t.paymentMethod ?? "",
       Boolean(t.recurringId),
       dayDiff(localISO(t.createdAt), t.date),
-      safe((t.tags ?? []).join("|")),
-      options.includeNotes ? safe(t.note ?? "") : "",
+      (t.tags ?? []).join("|"),
+      t.note ?? "",
     ];
   });
 
@@ -291,9 +267,9 @@ export function buildAnalyticsFiles(
       const b = bracketById.get(c.bracketId);
       return [
         c.id!,
-        safe(c.name),
+        c.name,
         c.bracketId,
-        safe(b?.name ?? ""),
+        b?.name ?? "",
         b?.kind ?? "spend",
         flowOfBracket(b),
         round2(c.budget),
@@ -374,21 +350,26 @@ export function buildAnalyticsFiles(
       const outstanding = round2(s.amountOwed - s.amountSettled);
       return [
         s.id!, s.transactionId,
-        options.realPersonNames ? safe(s.personName) : personLabel.get(s.personName.trim().toLowerCase())!,
+        s.personName,
         round2(s.amountOwed), round2(s.amountSettled), outstanding, outstanding <= 0.005,
       ];
     });
 
-  const info: Cell[][] = [
-    ["AnalyticsSchemaVersion", ANALYTICS_SCHEMA_VERSION],
-    ["AppSchemaVersion", SCHEMA_VERSION],
-    ["ExportedAt", new Date(input.now).toISOString()],
-    ["AsOfDate", today],
-    ["Currency", input.currency],
-    ["IncludeNotes", options.includeNotes],
-    ["IncludeMerchants", options.includeMerchants],
-    ["RealPersonNames", options.realPersonNames],
-  ];
+  // Every value is text. A single column that mixed numbers, dates and
+  // true/false would be read back inconsistently (pandas turned `true` into 1;
+  // Power BI guesses one type from the first rows and errors on the rest).
+  const info: Cell[][] = (
+    [
+      ["AnalyticsSchemaVersion", ANALYTICS_SCHEMA_VERSION],
+      ["AppSchemaVersion", SCHEMA_VERSION],
+      ["ExportedAt", new Date(input.now).toISOString()],
+      ["AsOfDate", today],
+      ["Currency", input.currency],
+      ["IncludeNotes", true],
+      ["IncludeMerchants", true],
+      ["RealPersonNames", true],
+    ] as [string, string | number | boolean][]
+  ).map(([key, value]) => [key, String(value)]);
 
   const data: Record<string, Cell[][]> = {
     fact_transactions: factTx,
@@ -399,12 +380,50 @@ export function buildAnalyticsFiles(
     fact_splits: factSplits,
     export_info: info,
   };
+  return data;
+}
+
+/** Same tables as separate CSV files plus a text data dictionary. */
+export function buildAnalyticsFiles(input: AnalyticsInput): { name: string; content: string }[] {
+  const data = buildTables(input);
   const files = Object.keys(TABLES).map((k) => ({ name: TABLES[k].file, content: toCSV(TABLES[k], data[k]) }));
-  files.push({ name: "README_data_dictionary.txt", content: buildDictionary(data, input, options) });
+  files.push({ name: "README_data_dictionary.txt", content: buildDictionary(data, input, "csv") });
   return files;
 }
 
-function buildDictionary(data: Record<string, Cell[][]>, input: AnalyticsInput, options: AnalyticsOptions): string {
+// Columns that hold dates as "yyyy-mm-dd" text; in the workbook they become
+// real Excel dates so Power BI types them as Date automatically.
+const DATE_COLUMNS: Record<string, string[]> = {
+  fact_transactions: ["Date"],
+  dim_date: ["Date"],
+};
+
+/** One .xlsx workbook: a README sheet first, then one sheet per table. */
+export function buildAnalyticsWorkbook(
+  input: AnalyticsInput,
+  when: Date = new Date(),
+): Uint8Array {
+  const data = buildTables(input);
+  const readme: Sheet = {
+    name: "README",
+    columns: ["Money Mate analytics export — data dictionary"],
+    rows: buildDictionary(data, input, "workbook").split("\r\n").map((line) => [line]),
+    firstColumnWidth: 130,
+  };
+  const tables: Sheet[] = Object.keys(TABLES).map((k) => ({
+    name: k,
+    columns: TABLES[k].columns.map((c) => c[0]),
+    rows: data[k],
+    dateColumns: DATE_COLUMNS[k],
+  }));
+  return makeWorkbook([readme, ...tables], when);
+}
+
+function buildDictionary(
+  data: Record<string, Cell[][]>,
+  input: AnalyticsInput,
+  format: "workbook" | "csv",
+): string {
   const L: string[] = [];
   L.push("MONEY MATE — ANALYTICS EXPORT");
   L.push("=".repeat(30));
@@ -414,11 +433,16 @@ function buildDictionary(data: Record<string, Cell[][]>, input: AnalyticsInput, 
   L.push("PRIVACY");
   L.push("  These files are PLAIN TEXT and not encrypted. Anyone who gets them can read your finances.");
   L.push("  Keep them on a personal, preferably encrypted, drive. Do not email them or put them in a work account.");
-  L.push(`  Notes included: ${options.includeNotes ? "yes" : "no"}.  Merchant names included: ${options.includeMerchants ? "yes" : "no"}.  Real names of people in splits: ${options.realPersonNames ? "yes" : "no (P1, P2, …)"}.`);
+  L.push("  This export includes transaction notes, merchant names, and the names of people in split expenses.");
   L.push("");
   L.push("HOW TO USE WITH POWER BI DESKTOP");
-  L.push("  1. Unzip into a fixed folder (e.g. D:\\MoneyMateData) — each export replaces the same file names.");
-  L.push("  2. Get Data → Text/CSV and load each .csv (file origin: UTF-8).");
+  if (format === "workbook") {
+    L.push("  1. Get Data → Excel workbook → choose this file → tick every sheet EXCEPT README → Load.");
+    L.push("  2. Dates are real dates and true/false columns are real booleans, so no type fixing is needed.");
+  } else {
+    L.push("  1. Unzip into a fixed folder (e.g. D:\\MoneyMateData) — each export replaces the same file names.");
+    L.push("  2. Get Data → Text/CSV and load each .csv (file origin: UTF-8).");
+  }
   L.push("  3. Relationships (many → one):");
   L.push("       fact_transactions[DateKey]  → dim_date[DateKey]");
   L.push("       fact_transactions[CategoryId] → dim_category[CategoryId]");
@@ -426,19 +450,23 @@ function buildDictionary(data: Record<string, Cell[][]>, input: AnalyticsInput, 
   L.push("       fact_monthly[CategoryId]    → dim_category[CategoryId]");
   L.push("       fact_month_summary[DateKey] → dim_date[DateKey]");
   L.push("       fact_splits[TransactionId]  → fact_transactions[TransactionId]");
-  L.push("  4. Next time: replace the files with the new export and click Refresh.");
-  L.push("  File names and column names never change between versions; new columns are only ever added at the end.");
+  L.push(format === "workbook"
+    ? "  4. Next time: save the new export over the same file (same name and folder) and click Refresh."
+    : "  4. Next time: replace the files with the new export and click Refresh.");
+  L.push(`  ${format === "workbook" ? "Sheet" : "File"} names and column names never change between versions; new columns are only ever added at the end.`);
   L.push("");
   L.push("NOTES FOR ANALYSIS");
   L.push("  - Use Flow, not the category, to separate Income / Spend / Saving. Savings are NOT spending.");
   L.push("  - The current month is partial (IsPartialMonth = true). Exclude it when forecasting or comparing months.");
-  L.push("  - Text cells that begin with = + - @ are prefixed with ' so spreadsheets don't treat them as formulas.");
-  L.push("    Use MerchantClean for grouping; strip a leading ' if you need the raw text.");
+  if (format === "csv") {
+    L.push("  - Text cells that begin with = + - @ are prefixed with ' so spreadsheets don't treat them as formulas.");
+    L.push("    Use MerchantClean for grouping; strip a leading ' if you need the raw text.");
+  }
   L.push("  - Amount for split expenses is YOUR share. TotalBill is the whole bill.");
   L.push("");
   for (const k of Object.keys(TABLES)) {
     const t = TABLES[k];
-    L.push(`${t.file}   (${data[k].length} rows)`);
+    L.push(`${format === "workbook" ? `Sheet: ${t.title}` : t.file}   (${data[k].length} rows)`);
     L.push(`  ${t.grain}`);
     for (const [name, desc] of t.columns) L.push(`    ${name.padEnd(22)} ${desc}`);
     L.push("");
@@ -446,15 +474,13 @@ function buildDictionary(data: Record<string, Cell[][]>, input: AnalyticsInput, 
   return L.join("\r\n");
 }
 
-export function analyticsZipName(today: string): string {
-  return `moneymate-analytics-${today}.zip`;
-}
+/** Fixed name on purpose: Power BI remembers the file path, so saving each new
+ *  export over the same name keeps Refresh working. The export date is inside
+ *  (export_info sheet). */
+export const ANALYTICS_FILE_NAME = "moneymate-analytics.xlsx";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-/** Loads everything, builds the files and zips them. */
-export async function buildAnalyticsZip(
-  options: AnalyticsOptions = DEFAULT_OPTIONS,
-  today: string = todayISO(),
-): Promise<Uint8Array> {
+async function loadAnalyticsInput(today: string): Promise<AnalyticsInput> {
   const [transactions, categories, brackets, splitShares, budgetHistory, settings] = await Promise.all([
     db.transactions.toArray(),
     db.categories.toArray(),
@@ -463,15 +489,16 @@ export async function buildAnalyticsZip(
     db.budgetHistory.toArray(),
     db.settings.get(1),
   ]);
-  const files = buildAnalyticsFiles(
-    { transactions, categories, brackets, splitShares, budgetHistory, currency: settings?.currency ?? "", today, now: Date.now() },
-    options,
-  );
-  return makeZip(files);
+  return { transactions, categories, brackets, splitShares, budgetHistory, currency: settings?.currency ?? "", today, now: Date.now() };
 }
 
-export async function exportAnalyticsZip(options: AnalyticsOptions = DEFAULT_OPTIONS): Promise<void> {
-  const today = todayISO();
-  await downloadBinary(analyticsZipName(today), await buildAnalyticsZip(options, today), "application/zip");
+/** Loads everything and builds the workbook. */
+export async function buildAnalyticsWorkbookFromDb(
+  today: string = todayISO(),
+): Promise<Uint8Array> {
+  return buildAnalyticsWorkbook(await loadAnalyticsInput(today));
 }
 
+export async function exportAnalyticsWorkbook(): Promise<void> {
+  await downloadBinary(ANALYTICS_FILE_NAME, await buildAnalyticsWorkbookFromDb(), XLSX_MIME);
+}

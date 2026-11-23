@@ -1,34 +1,48 @@
 # Money Mate — ML analysis
 
-Reads the **analytics bundle** exported from the app (Settings → Analysis exports →
-*Export analytics bundle (.zip)*) and produces forecasts, budget warnings, anomaly
-flags and a merchant→category lookup. Runs fully on your own PC; nothing is uploaded.
+Reads the **analytics workbook** exported from the app (Settings → *Export for analysis* →
+**Export analytics (.xlsx)**) and produces forecasts, budget warnings, anomaly flags and a
+merchant→category lookup. One file in, one file out. Runs fully on your own PC; nothing is
+uploaded.
 
 ## Run it
 
 ```powershell
 pip install -r requirements.txt
-python analyze.py D:\MoneyMateData\moneymate-analytics-2026-11-18.zip
+python analyze.py D:\MoneyMateData\moneymate-analytics.xlsx
 ```
 
-Results go to an `ml_output` folder next to the zip (or use `--out <folder>`).
+Results go to an `ml_output` folder next to the workbook (or use `--out <folder>`).
 Read **`summary.txt`** first — it says what was done, how well each method worked on
 *your* data, and what not to trust yet.
 
-| File | What it is |
+| In `ml_output` | What it is |
 |---|---|
-| `forecast_next_month.csv` | Next month's spending: total and per category, with an 80% range |
-| `budget_risk.csv` | This month: projected end-of-month spend vs. budget per category (`ok` / `watch` / `over`) |
-| `anomalies.csv` | Unusually large purchases and possible duplicate charges |
-| `merchant_category_map.csv` | Each merchant's usual category — for auto-categorising new entries later |
-| `category_review.csv` | Past entries whose category disagrees with a confident prediction |
+| `ml_results.xlsx` | One workbook, one sheet per result (below) |
 | `summary.txt` | Plain-English report |
 
-## Load the results into Power BI
+Sheets in `ml_results.xlsx`:
 
-*Get Data → Text/CSV* for each result file. They are standalone tables; relate
-`CategoryId` to `dim_category[CategoryId]` if you want to filter them with the rest of
-your model. Re-run the script after each new export and click Refresh.
+| Sheet | What it is |
+|---|---|
+| `forecast_next_month` | Next month's spending: total and per category, with an 80% range |
+| `budget_risk` | This month: projected end-of-month spend vs. budget per category (`ok` / `watch` / `over`) |
+| `anomalies` | Unusually large purchases and possible duplicate charges |
+| `merchant_category_map` | Each merchant's usual category — for auto-categorising new entries later |
+| `category_review` | Past entries whose category disagrees with a confident prediction |
+
+Add `--csv` to write separate CSV files instead of the workbook. Older exports (a `.zip` of
+CSVs, or the unzipped folder) are still accepted as input.
+
+## Power BI Desktop
+
+1. **Export** from the app and save the file as `moneymate-analytics.xlsx` — always the same
+   name in the same folder, so Power BI's saved path keeps working.
+2. **Get Data → Excel workbook** → choose it → tick every sheet **except README** → Load.
+   Dates and true/false columns arrive already typed. The README sheet lists the
+   relationships to create.
+3. Run `analyze.py`, then **Get Data → Excel workbook** once more for `ml_results.xlsx`.
+4. Next time: save the new export over the old file, re-run the script, and click **Refresh**.
 
 ## How it works, and its limits
 
@@ -47,4 +61,4 @@ A few hundred rows a year is enough for these; it is not enough for deep learnin
 report will say so rather than pretend. The current (partial) month is never used for
 training or backtesting.
 
-The export is plain text. Keep it and these outputs on a personal drive, not a work account.
+The export is not encrypted. Keep it and these outputs on a personal drive, not a work account.

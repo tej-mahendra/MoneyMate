@@ -1,0 +1,21 @@
+APP LOCK + PRIVACY SCREEN — install
+
+1. Copy the files in this folder over your project (same paths).
+   main.tsx and Settings.tsx are cumulative: they already contain the earlier
+   changes (encrypted backups, analytics export, stale-version recovery).
+   If you edited either since, merge instead of overwriting:
+     - main.tsx:     import LockGate and wrap <App /> in <LockGate>
+     - Settings.tsx: import SecuritySettings and render <SecuritySettings />
+                     just above the "Your data" card
+     - capacitor.config.ts: plugins: { PrivacyScreen: { enable: false } }
+
+2. Install the three plugins:
+     npm install @capgo/capacitor-native-biometric @capacitor-community/privacy-screen @capacitor/app
+
+3. Checks:   npx tsc -b   &&   npx oxlint   &&   npx vitest run
+
+4. For the Android app, sync the native project BEFORE building the APK:
+     npx cap sync android
+   then build as usual (scripts\release.ps1).
+
+5. Push — the web version gets the lock on the next deploy.

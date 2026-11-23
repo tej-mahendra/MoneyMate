@@ -2,18 +2,21 @@
 """Money Mate — ML analysis of the analytics export.
 
 Usage:
-    python analyze.py moneymate-analytics-2026-11-18.zip
-    python analyze.py D:\\MoneyMateData --out D:\\MoneyMateData\\ml_output
+    python analyze.py moneymate-analytics.xlsx
+    python analyze.py D:\\MoneyMateData\\moneymate-analytics.xlsx --out D:\\MoneyMateData\\ml_output
 
-Reads the CSVs from the app's "Export analytics bundle" (a .zip or the unzipped
-folder) and writes results as CSV files you can load straight into Power BI:
+Reads the single workbook from the app's "Export analytics (.xlsx)" button (older
+exports — a .zip of CSVs or the unzipped folder — still work) and writes ONE
+workbook, ml_results.xlsx, that you load straight into Power BI. One sheet each:
 
-    forecast_next_month.csv     next month's spending, total and per category
-    budget_risk.csv             which categories are on track to break this month's budget
-    anomalies.csv               unusually large purchases and possible duplicate charges
-    merchant_category_map.csv   merchant -> usual category (for auto-categorising new entries)
-    category_review.csv         past entries whose category looks inconsistent with the rest
-    summary.txt                 plain-English report: what was done, how good it is, caveats
+    forecast_next_month         next month's spending, total and per category
+    budget_risk                 which categories are on track to break this month's budget
+    anomalies                   unusually large purchases and possible duplicate charges
+    merchant_category_map       merchant -> usual category (for auto-categorising new entries)
+    category_review             past entries whose category looks inconsistent with the rest
+
+plus summary.txt: a plain-English report of what was done, how good it is, and the
+caveats. Use --csv to write separate CSV files instead of the workbook.
 
 Methods are deliberately simple. A person logging ~75 entries a month has a few
 hundred rows a year: enough for these techniques, not enough for deep learning.
@@ -36,21 +39,34 @@ MIN_MONTHS = 3
 
 
 # ───────────────────────── loading ─────────────────────────
+TABLES = ["fact_transactions", "dim_category", "fact_monthly", "fact_month_summary", "export_info"]
+
+
 def load(src: Path) -> dict[str, pd.DataFrame]:
-    if src.suffix.lower() == ".zip":
-        tmp = Path(tempfile.mkdtemp(prefix="moneymate_"))
-        with zipfile.ZipFile(src) as z:
-            z.extractall(tmp)
-        src = tmp
-    names = ["fact_transactions", "dim_category", "fact_monthly", "fact_month_summary", "export_info"]
-    out = {}
-    for n in names:
-        f = src / f"{n}.csv"
-        if not f.exists():
-            sys.exit(f"Missing {f.name} in {src}. Is this a Money Mate analytics export?")
-        out[n] = pd.read_csv(f, encoding="utf-8-sig")  # BOM-safe
+    """Reads the export from a workbook (.xlsx), a .zip of CSVs, or a folder of CSVs."""
+    out: dict[str, pd.DataFrame] = {}
+    if src.suffix.lower() == ".xlsx":
+        sheets = pd.read_excel(src, sheet_name=None)  # every sheet, headers promoted
+        missing = [n for n in TABLES if n not in sheets]
+        if missing:
+            sys.exit(f"{src.name} is missing sheet(s): {', '.join(missing)}. Is this a Money Mate analytics export?")
+        out = {n: sheets[n] for n in TABLES}
+        # Excel stores real dates; the rest of the script works with yyyy-mm-dd text,
+        # exactly as the CSV export gives it.
+        out["fact_transactions"]["Date"] = pd.to_datetime(out["fact_transactions"]["Date"]).dt.strftime("%Y-%m-%d")
+    else:
+        if src.suffix.lower() == ".zip":
+            tmp = Path(tempfile.mkdtemp(prefix="moneymate_"))
+            with zipfile.ZipFile(src) as z:
+                z.extractall(tmp)
+            src = tmp
+        for n in TABLES:
+            f = src / f"{n}.csv"
+            if not f.exists():
+                sys.exit(f"Missing {f.name} in {src}. Is this a Money Mate analytics export?")
+            out[n] = pd.read_csv(f, encoding="utf-8-sig")  # BOM-safe
     info = dict(zip(out["export_info"]["Key"], out["export_info"]["Value"].astype(str)))
-    if int(info.get("AnalyticsSchemaVersion", 0)) > 1:
+    if int(float(info.get("AnalyticsSchemaVersion", 0))) > 1:
         print("Warning: this export is newer than this script knows; results may be incomplete.")
     out["info"] = info
     return out
@@ -316,8 +332,9 @@ def build_category_model(d, report):
 # ───────────────────────── main ─────────────────────────
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("source", type=Path, help="analytics .zip or the unzipped folder")
+    ap.add_argument("source", type=Path, help="the analytics .xlsx (or an older .zip / folder of CSVs)")
     ap.add_argument("--out", type=Path, help="output folder (default: ml_output next to the data)")
+    ap.add_argument("--csv", action="store_true", help="write separate CSV files instead of one workbook")
     a = ap.parse_args()
     d = load(a.source)
     asof = pd.Timestamp(d["info"]["AsOfDate"])
@@ -325,22 +342,31 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     tx = d["fact_transactions"]
-    months = int((~d["fact_month_summary"]["IsPartialMonth"]).sum())
+    months = int((~d["fact_month_summary"]["IsPartialMonth"].astype(bool)).sum())
     report = [f"MONEY MATE ANALYSIS — data as of {asof.date()}",
               f"{len(tx)} transactions over {len(d['fact_month_summary'])} months ({months} completed).", ""]
-    build_forecasts(d, asof, report).to_csv(out / "forecast_next_month.csv", index=False, encoding="utf-8-sig")
+    results: dict[str, pd.DataFrame] = {}
+    results["forecast_next_month"] = build_forecasts(d, asof, report)
     report.append("")
-    build_budget_risk(d, asof, report).to_csv(out / "budget_risk.csv", index=False, encoding="utf-8-sig")
+    results["budget_risk"] = build_budget_risk(d, asof, report)
     report.append("")
-    an = build_anomalies(d, report)
-    an.to_csv(out / "anomalies.csv", index=False, encoding="utf-8-sig")
+    results["anomalies"] = build_anomalies(d, report)
     report.append("")
-    mm, review = build_category_model(d, report)
-    mm.to_csv(out / "merchant_category_map.csv", index=False, encoding="utf-8-sig")
-    review.to_csv(out / "category_review.csv", index=False, encoding="utf-8-sig")
+    results["merchant_category_map"], results["category_review"] = build_category_model(d, report)
+
+    if a.csv:
+        for name, df in results.items():
+            df.to_csv(out / f"{name}.csv", index=False, encoding="utf-8-sig")
+        written = "separate CSV files"
+    else:
+        with pd.ExcelWriter(out / "ml_results.xlsx", engine="openpyxl") as xw:
+            for name, df in results.items():
+                # An empty result still gets its sheet, so Power BI's saved queries never break.
+                (df if len(df.columns) else pd.DataFrame({"note": ["nothing to report yet"]})).to_excel(xw, sheet_name=name, index=False)
+        written = "ml_results.xlsx"
     (out / "summary.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
     print("\n".join(report))
-    print(f"\nFiles written to {out}")
+    print(f"\nResults ({written}) and summary.txt written to {out}")
 
 
 if __name__ == "__main__":
