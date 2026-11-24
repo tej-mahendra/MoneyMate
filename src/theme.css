@@ -1357,7 +1357,10 @@ label:has(+ .sr-only:focus-visible) {
 }
 
 .toast {
-  background: var(--surface-strong);
+  /* Solid base under the tint — a see-through toast is unreadable over
+     content wherever the backdrop blur isn't applied. */
+  background-color: var(--void-elev);
+  background-image: linear-gradient(var(--surface-strong), var(--surface-strong));
   color: var(--ink);
   padding: 12px 22px;
   border-radius: 24px;

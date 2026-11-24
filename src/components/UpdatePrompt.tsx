@@ -86,6 +86,11 @@ export default function UpdatePrompt({
           // opened from here — or any other — is never covered by this banner.
           zIndex: 150,
           margin: 0,
+          // Solid, not the card's ~5% glass tint: this floats over live page
+          // content, and where the blur isn't applied (Android WebView) a
+          // see-through banner lets that content bleed into its text.
+          backgroundColor: "var(--void-elev)",
+          backgroundImage: "linear-gradient(var(--surface-strong), var(--surface-strong))",
           boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
         }}
       >
