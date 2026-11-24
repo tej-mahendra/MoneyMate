@@ -19,7 +19,8 @@ export type AuthFailure =
   | "failed" // wrong finger / PIN, or an unknown error
   | "lockedOut" // too many wrong attempts — the phone is making them wait
   | "noScreenLock" // the device has no PIN/pattern/password set
-  | "unavailable"; // this device or browser cannot verify the person
+  | "unavailable" // this device or browser cannot verify the person
+  | "pluginMissing"; // Android: this build was made without the unlock plugin
 
 export type AuthResult = { ok: true } | { ok: false; reason: AuthFailure };
 
@@ -47,8 +48,19 @@ const CODE = {
   SYSTEM_CANCEL: 15,
 } as const;
 
+/** Capacitor rejects with code UNIMPLEMENTED when a plugin's JS is bundled but
+ *  its native half was never compiled into the app (e.g. `npx cap sync android`
+ *  wasn't run after the plugin was added). Worth telling apart from "this
+ *  phone can't do it", because the fix is a new build, not a phone setting. */
+function isPluginMissing(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  if (e?.code === "UNIMPLEMENTED") return true;
+  return typeof e?.message === "string" && /plugin is not implemented|not implemented on android/i.test(e.message);
+}
+
 /** Translates the plugin's error (its `code` may arrive as a number or a numeric string). */
 export function mapNativeError(err: unknown): AuthFailure {
+  if (isPluginMissing(err)) return "pluginMissing";
   const code = Number((err as { code?: unknown } | null)?.code);
   switch (code) {
     case CODE.USER_CANCEL:
@@ -94,8 +106,8 @@ export const nativeAuth: DeviceAuth = {
       const r = await NativeBiometric.isAvailable({ useFallback: true });
       if (r.isAvailable) return { available: true };
       return { available: false, reason: r.deviceIsSecure ? "unavailable" : "noScreenLock" };
-    } catch {
-      return { available: false, reason: "unavailable" };
+    } catch (err) {
+      return { available: false, reason: isPluginMissing(err) ? "pluginMissing" : "unavailable" };
     }
   },
   async enroll() {

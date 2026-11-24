@@ -9,6 +9,7 @@ const MESSAGE: Record<AuthFailure, string | null> = {
   lockedOut: "Too many attempts. Wait a moment, or use your device PIN.",
   noScreenLock: "Set a screen lock (PIN, pattern or fingerprint) in your device settings first.",
   unavailable: "This device can't verify you right now.",
+  pluginMissing: "This version of the app was built without the unlock feature. Install the latest build.",
 };
 
 /** Full-screen cover shown while the app is locked. Prompts automatically

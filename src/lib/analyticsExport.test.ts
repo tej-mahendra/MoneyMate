@@ -320,7 +320,7 @@ describe("single workbook export", () => {
     expect(g.find((r) => r[0].v === "IncludeMerchants")![1].v).toBe("true");
     expect(g.find((r) => r[0].v === "IncludeNotes")![1].v).toBe("true");
     expect(g.find((r) => r[0].v === "RealPersonNames")![1].v).toBe("true");
-    expect(g.find((r) => r[0].v === "AnalyticsSchemaVersion")![1].v).toBe("1");
+    expect(g.find((r) => r[0].v === "AnalyticsSchemaVersion")![1].v).toBe("2");
   });
 
   it("stores text as plain text — no apostrophe prefix (that is only for CSV)", () => {

@@ -7,12 +7,16 @@ export default function CategoryRow({
   spent,
   currency,
   isAllocation = false,
+  hideBudget = false,
   onClick,
 }: {
   category: Category;
   spent: number;
   currency: string;
   isAllocation?: boolean;
+  /** One-off purchases have no budget: show what was spent, never
+   *  "Not budgeted yet" / "unbudgeted". */
+  hideBudget?: boolean;
   onClick?: () => void;
 }) {
   // A category that's never been budgeted or spent against has nothing to
@@ -20,6 +24,21 @@ export default function CategoryRow({
   // the kind of repeated, meaningless-per-instance text that makes a list
   // read as a debug dump rather than a considered piece of UI. Silence
   // here is more informative than a number that's always zero.
+  if (hideBudget) {
+    return (
+      <div className="cat-row" onClick={onClick}>
+        <div className="row-top" style={{ marginBottom: 0 }}>
+          <span className="name">
+            <span className="icon">{category.icon}</span>
+            {category.name}
+          </span>
+          <span className="figs">
+            {spent > 0 ? <b>{fmtMoney(spent, currency)}</b> : "nothing this month"}
+          </span>
+        </div>
+      </div>
+    );
+  }
   const isEmpty = category.budget === 0 && spent === 0;
   const pct = category.budget > 0 ? (spent / category.budget) * 100 : spent > 0 ? 100 : 0;
   const state = progressState(pct, isAllocation);

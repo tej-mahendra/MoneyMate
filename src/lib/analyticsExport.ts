@@ -21,7 +21,7 @@ import { downloadBinary } from "./downloadBinary";
 // ever ADD columns (at the end) and bump ANALYTICS_SCHEMA_VERSION.
 // ─────────────────────────────────────────────────────────────────────────
 
-export const ANALYTICS_SCHEMA_VERSION = 1;
+export const ANALYTICS_SCHEMA_VERSION = 2;
 
 export interface AnalyticsInput {
   transactions: Transaction[];
@@ -37,7 +37,7 @@ export interface AnalyticsInput {
 }
 
 type Cell = string | number | boolean;
-type Flow = "Income" | "Spend" | "Saving";
+type Flow = "Income" | "Spend" | "Saving" | "OneOff";
 
 interface TableDef {
   file: string;
@@ -58,7 +58,7 @@ export const TABLES: Record<string, TableDef> = {
       ["Date", "Transaction date, yyyy-mm-dd."],
       ["DateKey", "Date as a number yyyymmdd — relates to dim_date[DateKey]."],
       ["CategoryId", "Relates to dim_category[CategoryId]. -1 = category was deleted (shown as Uncategorized)."],
-      ["Flow", "Income, Spend or Saving. Saving = money moved into a savings/investment bracket (not spent)."],
+      ["Flow", "Income, Spend, Saving or OneOff. Saving = money moved into a savings/investment bracket (not spent). OneOff = a big irregular purchase (phone, bike…): real money out, but not part of monthly spend."],
       ["Amount", "Always positive. For split expenses this is YOUR share only."],
       ["SignedAmount", "Cash effect: + for Income, − for Spend and Saving."],
       ["IsSplit", "true when part of the bill belongs to other people."],
@@ -106,8 +106,8 @@ export const TABLES: Record<string, TableDef> = {
       ["Category", "Category name."],
       ["BracketId", "Id of the bracket it belongs to."],
       ["Bracket", "Bracket name (Expenditure, Savings, Investments, Income, …)."],
-      ["Kind", "Bracket kind as the app stores it: spend, allocation or income."],
-      ["Flow", "Income, Spend or Saving (allocation brackets are Saving)."],
+      ["Kind", "Bracket kind as the app stores it: spend, allocation, income or one_off."],
+      ["Flow", "Income, Spend, Saving or OneOff (allocation brackets are Saving; one_off brackets are OneOff)."],
       ["CurrentMonthlyBudget", "Today's monthly budget. For past months use fact_monthly[Budget]."],
       ["IsArchived", "true when the category or its bracket is archived."],
       ["Color", "Hex colour used in the app — handy for matching Power BI visuals."],
@@ -142,6 +142,7 @@ export const TABLES: Record<string, TableDef> = {
       ["SpendBudget", "Sum of spend budgets that applied that month."],
       ["TxCount", "Number of transactions."],
       ["IsPartialMonth", "true for the current month."],
+      ["OneOff", "Total of big irregular purchases (phone, bike…). NOT included in Spent; IS included in LeftOver."],
     ],
   },
   fact_splits: {
@@ -218,12 +219,18 @@ export function buildTables(input: AnalyticsInput): Record<string, Cell[][]> {
   const catById = new Map(categories.map((c) => [c.id!, c]));
 
   const flowOfBracket = (b: Bracket | undefined): Flow =>
-    b?.kind === "income" ? "Income" : b?.kind === "allocation" ? "Saving" : "Spend";
+    b?.kind === "income"
+      ? "Income"
+      : b?.kind === "allocation"
+        ? "Saving"
+        : b?.kind === "one_off"
+          ? "OneOff"
+          : "Spend";
   const flowOfTx = (t: Transaction): Flow => {
     if (t.type === "income") return "Income";
     const c = catById.get(t.categoryId);
     const f = c ? flowOfBracket(bracketById.get(c.bracketId)) : "Spend";
-    return f === "Saving" ? "Saving" : "Spend";
+    return f === "Saving" || f === "OneOff" ? f : "Spend";
   };
 
   const owedByTx = new Map<number, number>();
@@ -338,7 +345,7 @@ export function buildTables(input: AnalyticsInput): Record<string, Cell[][]> {
     factSummary.push([
       m, mDate, round2(snap.income), round2(snap.spent), round2(snap.saved), round2(snap.left),
       snap.income > 0 ? Math.round((snap.saved / snap.income) * 10000) / 10000 : 0,
-      round2(spendBudget), snap.txCount, partial,
+      round2(spendBudget), snap.txCount, partial, round2(snap.oneOff),
     ]);
   }
 
@@ -456,7 +463,7 @@ function buildDictionary(
   L.push(`  ${format === "workbook" ? "Sheet" : "File"} names and column names never change between versions; new columns are only ever added at the end.`);
   L.push("");
   L.push("NOTES FOR ANALYSIS");
-  L.push("  - Use Flow, not the category, to separate Income / Spend / Saving. Savings are NOT spending.");
+  L.push("  - Use Flow, not the category, to separate Income / Spend / Saving / OneOff. Savings and one-off purchases are NOT monthly spending.");
   L.push("  - The current month is partial (IsPartialMonth = true). Exclude it when forecasting or comparing months.");
   if (format === "csv") {
     L.push("  - Text cells that begin with = + - @ are prefixed with ' so spreadsheets don't treat them as formulas.");

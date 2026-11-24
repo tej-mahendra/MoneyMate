@@ -29,6 +29,11 @@ export default function History({ currency }: { currency: string }) {
   const allTx = useLiveQuery(() => db.transactions.toArray(), []) ?? EMPTY_LIST;
   const categories = useLiveQuery(() => db.categories.toArray(), []) ?? EMPTY_LIST;
   const brackets = useLiveQuery(() => db.brackets.toArray(), []) ?? EMPTY_LIST;
+  // One-off purchases are shown by the item's own name, not "Purchases · name".
+  const oneOffBracketIds = new Set(brackets.filter((b) => b.kind === "one_off").map((b) => b.id));
+  const oneOffCategoryIds = new Set(
+    categories.filter((c) => oneOffBracketIds.has(c.bracketId)).map((c) => c.id),
+  );
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const curMonth = monthKey(todayISO());
 
@@ -44,7 +49,9 @@ export default function History({ currency }: { currency: string }) {
   const catFilter = params.get("cat") ? Number(params.get("cat")) : null;
   const kindParam = params.get("kind");
   const kindFilter: SnapshotKind | null =
-    kindParam === "income" || kindParam === "spent" || kindParam === "saved" ? kindParam : null;
+    kindParam === "income" || kindParam === "spent" || kindParam === "saved" || kindParam === "oneoff"
+      ? kindParam
+      : null;
   const [lastDeleted, setLastDeleted] = useState<{ transaction: Transaction; shares: SplitShare[] } | null>(null);
 
   // Only months that have something logged (plus the current one), newest
@@ -191,7 +198,13 @@ export default function History({ currency }: { currency: string }) {
                   setParams(next, { replace: true });
                 }}
               >
-                {kindFilter === "income" ? "Income" : kindFilter === "saved" ? "Saved & invested" : "Spent"}{" "}
+                {kindFilter === "income"
+                  ? "Income"
+                  : kindFilter === "saved"
+                    ? "Saved & invested"
+                    : kindFilter === "oneoff"
+                      ? "One-off"
+                      : "Spent"}{" "}
                 <X size={12} style={{ display: "inline", verticalAlign: "middle" }} />
               </button>
             </div>
@@ -298,8 +311,9 @@ export default function History({ currency }: { currency: string }) {
                     </div>
                     <div className="tx-meta">
                       <div className="tx-cat">
-                        {c?.name || "Uncategorized"}
-                        {t.merchant ? " · " + t.merchant : ""}
+                        {oneOffCategoryIds.has(t.categoryId) && t.merchant
+                          ? t.merchant
+                          : (c?.name || "Uncategorized") + (t.merchant ? " · " + t.merchant : "")}
                       </div>
                       {t.note && <div className="tx-note">{t.note}</div>}
                       <div className="tx-date">

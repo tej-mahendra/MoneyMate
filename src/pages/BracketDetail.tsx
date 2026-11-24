@@ -3,7 +3,7 @@ import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useParams } from "react-router-dom";
 import { db, type Category } from "../db/db";
-import { fmtMoney, monthKey, monthLabel, todayISO } from "../lib/format";
+import { fmtMoney, monthKey, monthLabel, shortDate, todayISO } from "../lib/format";
 import { computeCatchAllAdjustment, progressState } from "../lib/budgetLogic";
 import Ring from "../components/Ring";
 import IconPicker from "../components/IconPicker";
@@ -62,6 +62,22 @@ export default function BracketDetail({
     if (t.type !== relevantTxType || !categoryIds.has(t.categoryId)) continue;
     spentByCategory.set(t.categoryId, (spentByCategory.get(t.categoryId) ?? 0) + t.amount);
   }
+  const isOneOff = bracket?.kind === "one_off";
+  // One-off brackets show running totals instead of a budget: this month,
+  // this year and all time (archived categories included — spent is spent).
+  const allCategoryIds = new Set(categories.map((c) => c.id));
+  const oneOffTx = isOneOff
+    ? txs.filter((t) => t.type === "expense" && allCategoryIds.has(t.categoryId))
+    : [];
+  const thisYear = curMonth.slice(0, 4);
+  // Newest purchase first; each is shown by its own name ("iPhone 16").
+  const purchases = [...oneOffTx].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt,
+  );
+  const oneOffYear = oneOffTx
+    .filter((t) => t.date.slice(0, 4) === thisYear)
+    .reduce((s, t) => s + t.amount, 0);
+  const oneOffAll = oneOffTx.reduce((s, t) => s + t.amount, 0);
   const totalTarget = activeCategories.reduce((s, c) => s + c.budget, 0);
   const totalSpent = [...spentByCategory.values()].reduce((s, v) => s + v, 0);
   const left = totalTarget - totalSpent;
@@ -282,7 +298,7 @@ export default function BracketDetail({
         <div className="sub">{monthLabel(curMonth)}</div>
       </header>
       <div className="content">
-        {bracket.kind !== "income" && totalTarget > 0 && (
+        {bracket.kind !== "income" && !isOneOff && totalTarget > 0 && (
           <div className="card bracket-hero">
             <div className="ring-wrap">
               <Ring pct={ringPct} color={ringState} size={96} />
@@ -333,6 +349,21 @@ export default function BracketDetail({
               <div className="value">{fmtMoney(loggedIncome, currency)}</div>
             </div>
           </div>
+        ) : isOneOff ? (
+          <div className="grid-3">
+            <div>
+              <div className="label">This month</div>
+              <div className="value">{fmtMoney(totalSpent, currency)}</div>
+            </div>
+            <div>
+              <div className="label">This year</div>
+              <div className="value">{fmtMoney(oneOffYear, currency)}</div>
+            </div>
+            <div>
+              <div className="label">All time</div>
+              <div className="value">{fmtMoney(oneOffAll, currency)}</div>
+            </div>
+          </div>
         ) : (
           <div className="grid-3">
             <div>
@@ -350,6 +381,49 @@ export default function BracketDetail({
           </div>
         )}
 
+        {isOneOff && (
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: purchases.length === 0 ? 0 : 4 }}>
+              <h2 style={{ margin: 0 }}>Purchases</h2>
+              <button
+                className="btn small secondary"
+                onClick={() => navigate(`/add?kind=oneoff&bracket=${bracketId}`)}
+              >
+                + Add
+              </button>
+            </div>
+            {purchases.length === 0 ? (
+              <div className="empty">
+                <div className="glyph">
+                  <Wallet size={30} strokeWidth={1.5} />
+                </div>
+                Nothing here yet — log a phone, a bike, anything big. These never count toward your monthly spend.
+              </div>
+            ) : (
+              purchases.map((t) => (
+                <div
+                  className="tx tx-link"
+                  key={t.id}
+                  onClick={() => navigate(`/transaction/${t.id}`)}
+                >
+                  <div className="tx-left">
+                    <div className="tx-meta">
+                      <div className="tx-cat">
+                        {t.merchant || t.note || categories.find((c) => c.id === t.categoryId)?.name || "Purchase"}
+                      </div>
+                      <div className="tx-date">{shortDate(t.date)}</div>
+                    </div>
+                  </div>
+                  <div className="tx-right">
+                    <span className="tx-amt">−{fmtMoney(t.amount, currency)}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {!isOneOff && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: activeCategories.length === 0 ? 0 : 4 }}>
             <h2 style={{ margin: 0 }}>Categories</h2>
@@ -407,6 +481,7 @@ export default function BracketDetail({
                   spent={spentByCategory.get(c.id!) ?? 0}
                   currency={currency}
                   isAllocation={bracket.kind === "allocation"}
+                  hideBudget={isOneOff}
                   onClick={() => navigate("/history?cat=" + c.id)}
                 />
               ),
@@ -432,7 +507,7 @@ export default function BracketDetail({
                     onColorChange={(color) => updateCat(i, "color", color)}
                   />
                   <input type="text" placeholder="Category" value={c.name} onChange={(e) => updateCat(i, "name", e.target.value)} />
-                  {bracket.kind !== "income" && (
+                  {bracket.kind !== "income" && !isOneOff && (
                     <input type="number" placeholder={amountLabel} value={c.budget} onChange={(e) => updateCat(i, "budget", e.target.value)} onWheel={(e) => e.currentTarget.blur()} />
                   )}
                   <button className="icon-btn danger" aria-label="Remove" onClick={() => removeCat(i)}><X size={15} /></button>
@@ -451,8 +526,9 @@ export default function BracketDetail({
             </>
           )}
         </div>
+        )}
 
-        {archivedCategories.length > 0 && (
+        {!isOneOff && archivedCategories.length > 0 && (
           <div className="card">
             <h2>Archived</h2>
             {archivedCategories.map((c) => (

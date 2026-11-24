@@ -624,7 +624,9 @@ function sanitizeBrackets(raw: unknown[]): Bracket[] {
       unknown
     >;
     const kind: BracketKind =
-      b.kind === "allocation" || b.kind === "income" ? b.kind : "spend";
+      b.kind === "allocation" || b.kind === "income" || b.kind === "one_off"
+        ? b.kind
+        : "spend";
     return {
       name: asText(b.name, 60).trim() || "Bracket",
       icon: asText(b.icon, MAX_ICON_LEN) || "＊",

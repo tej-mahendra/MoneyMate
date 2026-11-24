@@ -24,7 +24,7 @@ export default function MonthSnapshotCard({
   const empty = s.txCount === 0;
   // Bar shows where income went; only meaningful when there is income and
   // nothing overdrew it.
-  const base = Math.max(s.income, s.spent + s.saved);
+  const base = Math.max(s.income, s.spent + s.saved + s.oneOff);
   const pct = (n: number) => (base > 0 ? Math.max(0, (n / base) * 100) : 0);
   const pick = (kind: SnapshotKind, amount: number) =>
     onSelect && amount > 0 ? () => onSelect(kind) : undefined;
@@ -63,6 +63,14 @@ export default function MonthSnapshotCard({
               active={activeKind === "saved"}
               onClick={pick("saved", s.saved)}
             />
+            {s.oneOff > 0 && (
+              <Stat
+                label="One-off"
+                value={fmtMoney(s.oneOff, currency)}
+                active={activeKind === "oneoff"}
+                onClick={pick("oneoff", s.oneOff)}
+              />
+            )}
             {/* "Left over" only means something against logged income. */}
             {s.income > 0 ? (
               <Stat
@@ -77,7 +85,7 @@ export default function MonthSnapshotCard({
           {base > 0 && (
             <div
               role="img"
-              aria-label={`Of your money: ${pct(s.spent).toFixed(0)}% spent, ${pct(s.saved).toFixed(0)}% saved`}
+              aria-label={`Of your money: ${pct(s.spent).toFixed(0)}% spent, ${pct(s.saved).toFixed(0)}% saved${s.oneOff > 0 ? `, ${pct(s.oneOff).toFixed(0)}% one-off` : ""}`}
               style={{
                 display: "flex",
                 height: 8,
@@ -89,6 +97,9 @@ export default function MonthSnapshotCard({
             >
               <span style={{ width: `${pct(s.spent)}%`, background: "var(--gold)" }} />
               <span style={{ width: `${pct(s.saved)}%`, background: "var(--good)" }} />
+              {s.oneOff > 0 && (
+                <span style={{ width: `${pct(s.oneOff)}%`, background: "var(--accent, #B98CF0)" }} />
+              )}
             </div>
           )}
           {s.income > 0 && (

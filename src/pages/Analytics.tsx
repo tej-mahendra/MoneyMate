@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { db } from "../db/db";
 import { adjacentMonth, loggedMonthsFromDates } from "../lib/loggedMonths";
 import { buildSnapshot } from "../lib/monthSnapshot";
+import { isOffBudgetKind } from "../lib/bracketScope";
 import MonthSnapshotCard from "../components/MonthSnapshotCard";
 import {
   fmtMoney,
@@ -164,9 +165,12 @@ export default function Analytics({ currency }: { currency: string }) {
   // Dashboard already excludes it from "Spent"; every figure derived from
   // rangeExpenses below (pie chart, trend line, top merchants, insights)
   // needs the same exclusion so a savings transfer doesn't inflate them.
+  // One-off purchases (a phone, a bike) are excluded the same way, so one
+  // big buy never distorts the pie, trend, merchants or insights — the
+  // snapshot card shows them on their own line instead.
   const allocationCategoryIds = useMemo(() => {
     const allocationBracketIds = new Set(
-      brackets.filter((b) => b.kind === "allocation").map((b) => b.id),
+      brackets.filter((b) => isOffBudgetKind(b.kind)).map((b) => b.id),
     );
     return new Set(
       categories.filter((c) => allocationBracketIds.has(c.bracketId)).map((c) => c.id),

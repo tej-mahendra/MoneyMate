@@ -35,7 +35,8 @@ split expense, `Amount` is **your own share** only; what friends owe is in
 
 Two levels: a **Bracket** (Expenditure, Savings, Investments, Income, or any
 custom one the person adds) has a `Kind` — `spend` (a capped budget), `allocation`
-(a transfer-out target, like Savings/Investments/EMI), or `income` (a source of
+(a transfer-out target, like Savings/Investments/EMI), `one_off` (big irregular
+purchases like a phone or bike — real money out, but never part of monthly spend), or `income` (a source of
 money in). A **Category** belongs to exactly one bracket and inherits its kind —
 Rent/Food under Expenditure, Portfolio/Gold under Investments, Salary/Freelance
 under Income. A bracket's own total is always the sum of its categories' budgets.
@@ -85,7 +86,7 @@ back off in code if you're parsing programmatically rather than opening by hand.
 | `Name`          | string  |                                                                                                                                                                                       |
 | `BracketId`     | integer | **Join key** to `moneymate-brackets-*.csv`                                                                                                                                                 |
 | `BracketName`   | string  | Denormalized, for convenience                                                                                                                                                         |
-| `BracketKind`   | string  | Denormalized from the bracket — `spend`, `allocation`, or `income` (see below)                                                                                                        |
+| `BracketKind`   | string  | Denormalized from the bracket — `spend`, `allocation`, `income`, or `one_off` (see below)                                                                                                        |
 | `Icon`          | string  | Emoji                                                                                                                                                                                 |
 | `Color`         | string  | Hex color used in-app                                                                                                                                                                 |
 | `MonthlyBudget` | float   | For a `spend`-kind bracket, the budget cap. For `allocation`, the target amount (same field, different meaning — filter on `BracketKind` before aggregating). Always `0` for `income` |
@@ -97,7 +98,7 @@ back off in code if you're parsing programmatically rather than opening by hand.
 | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `BracketId` | integer | Primary key                                                                                                                                                                                                                                      |
 | `Name`      | string  | e.g. `Expenditure`, `Savings`, `Investments`, `Income`, or any custom bracket added                                                                                                                                                              |
-| `Kind`      | string  | `spend` = a capped budget bracket (Rent, Food… roll up into it); `allocation` = a transfer-out-of-income target, not a spend (Savings, Investments, EMI…); `income` = a source of money in (Salary, Freelance…), budget is meaningless for these |
+| `Kind`      | string  | `spend` = a capped budget bracket (Rent, Food… roll up into it); `allocation` = a transfer-out-of-income target, not a spend (Savings, Investments, EMI…); `income` = a source of money in (Salary, Freelance…), budget is meaningless for these; `one_off` = big irregular purchases (phone, bike…), no budget, excluded from monthly spend |
 | `Icon`      | string  | Emoji                                                                                                                                                                                                                                            |
 | `Color`     | string  | Hex color used in-app                                                                                                                                                                                                                            |
 | `Archived`  | boolean |                                                                                                                                                                                                                                                  |

@@ -26,6 +26,8 @@ export default function LockGate({ children }: { children: ReactNode }) {
       ).then((h) => {
         if (disposed) void h.remove();
         else removeNative = () => void h.remove();
+      }).catch(() => {
+        /* plugin not built into this app — the WebView's own signals still apply */
       });
     }
     return () => {

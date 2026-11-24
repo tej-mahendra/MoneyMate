@@ -380,6 +380,27 @@ label:first-child {
   margin-top: 0;
 }
 
+/* A <label> used as a button (e.g. "Restore from backup", which opens the
+   file picker) must not inherit the small-caps field-label treatment. */
+label.btn {
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 0;
+}
+
+/* No browser spinner arrows on amount fields — they eat width, look out of
+   place on the dark theme, and nudge values by accident. */
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 input[type=text],
 input[type=number],
 input[type=date],
@@ -1610,8 +1631,11 @@ label:has(+ .sr-only:focus-visible) {
   inset: 0;
   z-index: 200;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* Centering is done by the dialog's own `margin: auto` rather than
+     align-items: center, so a dialog taller than the screen scrolls instead
+     of having its top (icon + title) cut off. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -1627,6 +1651,7 @@ label:has(+ .sr-only:focus-visible) {
 .confirm-dialog {
   width: 100%;
   max-width: 380px;
+  margin: auto;
   background: var(--void-elev);
   border: 1px solid var(--surface-border-strong);
   border-radius: 22px;

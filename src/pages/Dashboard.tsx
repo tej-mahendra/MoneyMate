@@ -18,6 +18,7 @@ import CategoryRow from "../components/CategoryRow";
 import Ring from "../components/Ring";
 import MonthReview from "../components/MonthReview";
 import { adjacentMonth, loggedMonthsFromDates } from "../lib/loggedMonths";
+import { isOffBudgetKind } from "../lib/bracketScope";
 import { shouldNudgeBackup, snoozeUntil, oldestCreatedAt } from "../lib/backupNudge";
 import { Wallet, Receipt, ChevronLeft, ChevronRight, CalendarCheck, Save, X } from "lucide-react";
 
@@ -84,11 +85,12 @@ export default function Dashboard({ currency }: { currency: string }) {
   const spendBracketIds = new Set(
     brackets.filter((b) => b.kind === "spend" && !b.archived).map((b) => b.id),
   );
-  // Allocation exclusion intentionally isn't archived-filtered — an
-  // archived Savings bracket's transactions still shouldn't get swept into
-  // "Spent" against the budget cap just because the bracket is hidden.
+  // Allocation (and one-off) exclusion intentionally isn't archived-filtered
+  // — an archived Savings bracket's transactions still shouldn't get swept
+  // into "Spent" against the budget cap just because the bracket is hidden.
+  // One-off purchases (a phone, a bike) never count as monthly spend.
   const allocationBracketIds = new Set(
-    brackets.filter((b) => b.kind === "allocation").map((b) => b.id),
+    brackets.filter((b) => isOffBudgetKind(b.kind)).map((b) => b.id),
   );
   const allCats = useLiveQuery(() => db.categories.toArray(), []) ?? EMPTY_LIST;
   const categories = allCats.filter(

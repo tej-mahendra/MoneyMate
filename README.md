@@ -72,6 +72,7 @@ The whole app is built on a two-level model instead of a flat list of categories
   - `spend` — a capped budget. Only spend-kind brackets drive the Budget screen's ring, "Spent," and "Remaining" figures.
   - `allocation` — a transfer out of income toward a goal (Savings, Investments, EMI…). Has a soft target, not a hard cap, and never counts against the spending cap.
   - `income` — a source of money in. Budget/target is meaningless here.
+  - `one_off` — big, irregular purchases (a phone, a bike…). Real money out, so it reduces what's left over, but it has no budget and never counts toward monthly spend, the budget cap, the widget or run-rate analytics. Exports tag it `Flow = OneOff`.
 - **Category** — belongs to exactly one bracket and inherits its kind. Rent and Food live under Expenditure; Portfolio and Gold could live under Investments. A bracket with a single category and a bracket with ten behave identically everywhere — sub-dividing is entirely optional per bracket, never a special case in the code.
 
 A bracket's own total is always the sum of its categories' budgets — a bracket never carries a budget field of its own. That's what lets any bracket open into the same detail page for further breakdown, with no distinction in the code between "the app's built-in categories" and "brackets you added yourself."

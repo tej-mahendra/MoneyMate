@@ -2,6 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { liveQuery } from "dexie";
 import { db, computeMonthReport } from "../db/db";
 import { monthKey, monthLabel, todayISO } from "./format";
+import { isOffBudgetKind } from "./bracketScope";
 import {
   syncWidget,
   type WidgetCategorySnapshot,
@@ -54,7 +55,7 @@ export async function buildWidgetSnapshot(): Promise<WidgetSnapshot> {
     brackets.filter((b) => b.kind === "spend" && !b.archived).map((b) => b.id),
   );
   const allocationBracketIds = new Set(
-    brackets.filter((b) => b.kind === "allocation").map((b) => b.id),
+    brackets.filter((b) => isOffBudgetKind(b.kind)).map((b) => b.id),
   );
   const allocationCategoryIds = new Set(
     categories

@@ -7,6 +7,7 @@ import { useUIStore } from "../store/useUIStore";
 const WHY_NOT: Record<AuthFailure, string> = {
   noScreenLock: "Set a screen lock (PIN, pattern or fingerprint) in your device settings first, then try again.",
   unavailable: "This device or browser can't verify your device lock, so the app lock can't be turned on here.",
+  pluginMissing: "This version of the app was built without the unlock feature. Install the latest build and try again.",
   cancelled: "Cancelled — the app lock was not changed.",
   failed: "That didn't work, so nothing was changed. Please try again.",
   lockedOut: "Too many attempts. Wait a moment and try again.",

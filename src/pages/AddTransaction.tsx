@@ -3,6 +3,7 @@ import { EMPTY_LIST } from "../lib/stable";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useGoBack } from "../lib/useGoBack";
+import { ensureOneOffCategory } from "../lib/oneOff";
 import { db, type TxType, type SplitShare } from "../db/db";
 import { todayISO, roundMoney, monthKey, monthLabel } from "../lib/format";
 import { useUIStore } from "../store/useUIStore";
@@ -13,8 +14,10 @@ const RECENT_CAT_KEY = "pfos_last_category"; // suffixed per kind, e.g. `${RECEN
 
 /** What the person is logging. Savings/investments are stored as expense-type
  *  transactions in an allocation bracket (money moved, not spent) — "savings"
- *  is only a UI kind so they get their own tab instead of hiding in Expense. */
-type Kind = "expense" | "income" | "savings";
+ *  is only a UI kind so they get their own tab instead of hiding in Expense.
+ *  "oneoff" is the same idea for big irregular purchases (a phone, a bike):
+ *  expense-type transactions in a one_off bracket, kept out of monthly spend. */
+type Kind = "expense" | "income" | "savings" | "oneoff";
 const isISODate = (v: string | null): v is string =>
   !!v && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(v);
 
@@ -56,8 +59,13 @@ export default function AddTransaction() {
   const allBrackets = useLiveQuery(() => db.brackets.toArray(), []) ?? EMPTY_LIST;
   const bracketKindById = new Map(allBrackets.map((b) => [b.id, b.kind]));
   const bracketById = new Map(allBrackets.map((b) => [b.id, b]));
+  const hasOneOffBracket = allBrackets.some((b) => b.kind === "one_off" && !b.archived);
 
-  const [kind, setKind] = useState<Kind>("expense");
+  // ?kind=oneoff&bracket=<id> lets a one-off bracket's own "Add a purchase"
+  // button open this form already on the right tab and bracket.
+  const [kind, setKind] = useState<Kind>(() =>
+    searchParams.get("kind") === "oneoff" ? "oneoff" : "expense",
+  );
   const type: TxType = kind === "income" ? "income" : "expense";
   // Each kind has its own category list — a "Food" cap makes no sense for a
   // salary deposit, and savings transfers aren't spending (see Settings →
@@ -65,13 +73,26 @@ export default function AddTransaction() {
   const kindOfCat = (c: { bracketId: number }): Kind | null => {
     const b = bracketById.get(c.bracketId);
     if (!b) return null; // orphaned category with no bracket at all
-    return b.kind === "income" ? "income" : b.kind === "allocation" ? "savings" : "expense";
+    if (b.kind === "income") return "income";
+    if (b.kind === "allocation") return "savings";
+    return b.kind === "one_off" ? "oneoff" : "expense";
   };
   // When editing, the entry's own category stays selectable even if its
   // bracket has since been archived — otherwise old entries can't be edited.
   const ownCategory = editingTx
     ? allCategories.find((c) => c.id === editingTx.categoryId)
     : undefined;
+  // One-off purchases have no category step — just the bracket they go in
+  // (asked only when there is more than one).
+  const [oneOffBracketId, setOneOffBracketId] = useState<number | null>(() => {
+    const p = Number(searchParams.get("bracket"));
+    return p > 0 ? p : null;
+  });
+  const oneOffBrackets = allBrackets.filter(
+    (b) => b.kind === "one_off" && (!b.archived || b.id === ownCategory?.bracketId),
+  );
+  const chosenOneOffBracket =
+    oneOffBrackets.find((b) => b.id === oneOffBracketId) ?? oneOffBrackets[0];
   function categoriesFor(k: Kind) {
     const list = allCategories.filter((c) => {
       const bracket = bracketById.get(c.bracketId);
@@ -83,6 +104,8 @@ export default function AddTransaction() {
     return list;
   }
   const categories = categoriesFor(kind);
+  // Nothing to save into: no categories (or, for one-off, no bracket yet).
+  const noTarget = kind === "oneoff" ? oneOffBrackets.length === 0 : categories.length === 0;
 
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState<number | null>(null);
@@ -172,7 +195,9 @@ export default function AddTransaction() {
     if (!editingTx || kindResolved.current || editingTx.type === "income") return;
     if (!ownCategory || allBrackets.length === 0) return;
     kindResolved.current = true;
-    if (kindOfCat(ownCategory) === "savings") setKind("savings");
+    const resolved = kindOfCat(ownCategory);
+    if (resolved === "savings" || resolved === "oneoff") setKind(resolved);
+    if (resolved === "oneoff") setOneOffBracketId(ownCategory.bracketId);
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [editingTx, ownCategory, allBrackets.length]);
 
@@ -191,6 +216,7 @@ export default function AddTransaction() {
     // otherwise this would stomp the loaded category the moment the type
     // resolves.
     if (editId) return;
+    if (kind === "oneoff") return; // no category step for one-off purchases
     if (categories.length === 0) {
       setCategoryId(null);
       return;
@@ -301,7 +327,17 @@ export default function AddTransaction() {
       showToast("Enter an amount greater than 0.");
       return;
     }
-    if (!categoryId) {
+    const isOneOffEntry = kind === "oneoff";
+    if (isOneOffEntry) {
+      if (!merchant.trim()) {
+        showToast("Enter what you bought.");
+        return;
+      }
+      if (!chosenOneOffBracket) {
+        showToast("Create a One-off bracket in Settings first.");
+        return;
+      }
+    } else if (!categoryId) {
       showToast(
         type === "income"
           ? "Add an income source first."
@@ -342,13 +378,30 @@ export default function AddTransaction() {
     }
     setSaving(true);
 
+    // One-off: the purchase lives in the bracket's own "Purchases" category.
+    // Editing within the same bracket keeps whatever category it already had.
+    let finalCategoryId = categoryId as number;
+    if (isOneOffEntry) {
+      try {
+        finalCategoryId =
+          editingTx && ownCategory && ownCategory.bracketId === chosenOneOffBracket!.id
+            ? editingTx.categoryId
+            : await ensureOneOffCategory(chosenOneOffBracket!.id!);
+      } catch (err) {
+        console.warn("Preparing one-off category failed", err);
+        setSaving(false);
+        showToast("Couldn't save that. Please try again.");
+        return;
+      }
+    }
+
     if (editId) {
       try {
         await db.transaction("rw", db.transactions, db.splitShares, async () => {
           await db.transactions.update(editId, {
             type,
             amount: amt,
-            categoryId,
+            categoryId: finalCategoryId,
             date,
             merchant: merchant.trim() || undefined,
             note: note.trim() || undefined,
@@ -374,7 +427,7 @@ export default function AddTransaction() {
         const id = await db.transactions.add({
           type,
           amount: amt,
-          categoryId,
+          categoryId: finalCategoryId,
           date,
           merchant: merchant.trim() || undefined,
           note: note.trim() || undefined,
@@ -394,14 +447,16 @@ export default function AddTransaction() {
     // Remembering the last category is a convenience — a blocked
     // localStorage must not turn a successful save into an error.
     try {
-      localStorage.setItem(`${RECENT_CAT_KEY}_${kind}`, String(categoryId));
+      if (!isOneOffEntry) localStorage.setItem(`${RECENT_CAT_KEY}_${kind}`, String(categoryId));
     } catch {
       /* ignore */
     }
     setSaving(false);
 
     showToast(
-      isSplitting
+      isOneOffEntry
+        ? `Added ${merchant.trim()} to ${chosenOneOffBracket!.name}.`
+        : isSplitting
         ? `Added ${amt} to ${categories.find((c) => c.id === categoryId)?.name || ""} — ${splitOthersTotal} split with ${validSplitPeople.length === 1 ? validSplitPeople[0].name : `${validSplitPeople.length} people`}.`
         : `Added ${amount} to ${categories.find((c) => c.id === categoryId)?.name || ""}.`,
     );
@@ -424,6 +479,11 @@ export default function AddTransaction() {
       const cat = categories.find((c) => c.id === categoryId);
       const bk = cat ? bracketKindById.get(cat.bracketId) : undefined;
       // replace: Back after saving shouldn't return to a finished Add form.
+      // A one-off purchase lands on its bracket so the new item shows in the list.
+      if (isOneOffEntry) {
+        navigate(`/bracket/${chosenOneOffBracket!.id}`, { replace: true });
+        return;
+      }
       navigate(bk === "spend" ? "/budget" : "/", { replace: true });
     }
   }
@@ -446,16 +506,44 @@ export default function AddTransaction() {
       <div className="content">
         <div className="card">
           <div className="chip-row" style={{ marginBottom: 4 }}>
-            {(["expense", "income", "savings"] as Kind[]).map((k) => (
+            {(
+              [
+                "expense",
+                "income",
+                "savings",
+                // Only offered once a one-off bracket exists (or when
+                // editing an entry that belongs to one).
+                ...(hasOneOffBracket || kind === "oneoff" ? ["oneoff"] : []),
+              ] as Kind[]
+            ).map((k) => (
               <button
                 key={k}
                 className={"chip" + (kind === k ? " active" : "")}
                 onClick={() => chooseKind(k)}
               >
-                {k === "expense" ? "Expense" : k === "income" ? "Income" : "Savings"}
+                {k === "expense"
+                  ? "Expense"
+                  : k === "income"
+                    ? "Income"
+                    : k === "savings"
+                      ? "Savings"
+                      : "One-off"}
               </button>
             ))}
           </div>
+
+          {kind === "oneoff" && (
+            <>
+              <label htmlFor="item">What did you buy?</label>
+              <input
+                id="item"
+                type="text"
+                placeholder="e.g. iPhone 16, Royal Enfield"
+                value={merchant}
+                onChange={(e) => setMerchant(e.target.value)}
+              />
+            </>
+          )}
 
           <label htmlFor="amt">
             {isSplitting ? "Total you paid" : "Amount"}
@@ -579,7 +667,31 @@ export default function AddTransaction() {
             </>
           )}
 
-          {categories.length === 0 ? (
+          {kind === "oneoff" ? (
+            oneOffBrackets.length === 0 ? (
+              <div className="empty" style={{ padding: "20px 8px" }}>
+                No one-off bracket yet.
+                <div style={{ marginTop: 12 }}>
+                  <button className="btn secondary" onClick={() => navigate("/settings")}>
+                    Add one in Settings
+                  </button>
+                </div>
+              </div>
+            ) : oneOffBrackets.length > 1 ? (
+              <>
+                <label htmlFor="bracket">Bracket</label>
+                <Dropdown
+                  id="bracket"
+                  value={String(chosenOneOffBracket?.id ?? "")}
+                  onChange={(v) => setOneOffBracketId(Number(v))}
+                  options={oneOffBrackets.map((b) => ({
+                    value: String(b.id),
+                    label: `${b.icon} ${b.name}`,
+                  }))}
+                />
+              </>
+            ) : null
+          ) : categories.length === 0 ? (
             <div className="empty" style={{ padding: "20px 8px" }}>
               {type === "income"
                 ? "No income sources set up yet."
@@ -649,18 +761,22 @@ export default function AddTransaction() {
 
           {!advanced ? (
             <button className="btn ghost" onClick={() => setAdvanced(true)}>
-              + Merchant, note, payment method
+              {kind === "oneoff" ? "+ Note, payment method" : "+ Merchant, note, payment method"}
             </button>
           ) : (
             <>
-              <label htmlFor="merchant">Merchant</label>
-              <input
-                id="merchant"
-                type="text"
-                placeholder="e.g. Zomato"
-                value={merchant}
-                onChange={(e) => setMerchant(e.target.value)}
-              />
+              {kind !== "oneoff" && (
+                <>
+                  <label htmlFor="merchant">Merchant</label>
+                  <input
+                    id="merchant"
+                    type="text"
+                    placeholder="e.g. Zomato"
+                    value={merchant}
+                    onChange={(e) => setMerchant(e.target.value)}
+                  />
+                </>
+              )}
               <label htmlFor="note">Note</label>
               <input
                 id="note"
@@ -688,7 +804,7 @@ export default function AddTransaction() {
 
           <button
             className="btn"
-            disabled={saving || categories.length === 0}
+            disabled={saving || noTarget}
             onClick={() => save(false)}
           >
             {saving ? "Saving…" : editId ? "Save changes" : "Save"}
@@ -696,7 +812,7 @@ export default function AddTransaction() {
           {!editId && (
             <button
               className="btn secondary"
-              disabled={saving || categories.length === 0}
+              disabled={saving || noTarget}
               onClick={() => save(true)}
             >
               Save &amp; add another

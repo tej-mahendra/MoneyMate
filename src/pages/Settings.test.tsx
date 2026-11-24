@@ -81,6 +81,22 @@ describe("Settings — Brackets list (no per-category flow toggle)", () => {
     expect(emi?.kind).toBe("allocation");
   });
 
+  it('creating a bracket with kind "One-off" persists the correct kind', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    await user.click(await screen.findByText("Add bracket"));
+    await user.type(
+      screen.getByPlaceholderText("Bracket name (e.g. EMI)"),
+      "Big Purchases",
+    );
+    await user.click(screen.getByRole("button", { name: "One-off" }));
+    await user.click(screen.getByText("Create bracket"));
+
+    const saved = await db.brackets.toArray();
+    expect(saved.find((b) => b.name === "Big Purchases")?.kind).toBe("one_off");
+  });
+
   it('creating a bracket defaults to kind "spend" (Budget cap) if left unchanged', async () => {
     const user = userEvent.setup();
     renderSettings();

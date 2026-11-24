@@ -48,6 +48,7 @@ const KIND_LABEL: Record<BracketKind, string> = {
   spend: "Budget cap",
   allocation: "Allocation",
   income: "Income",
+  one_off: "One-off",
 };
 
 export default function Settings({
@@ -392,11 +393,17 @@ export default function Settings({
                   <div className="tx-meta">
                     <div className="tx-cat">{b.name}</div>
                     <div className="tx-note">
-                      {KIND_LABEL[b.kind]} ·{" "}
-                      {categoryCountByBracket.get(b.id!) ?? 0} categor
-                      {(categoryCountByBracket.get(b.id!) ?? 0) === 1
-                        ? "y"
-                        : "ies"}
+                      {b.kind === "one_off" ? (
+                        <>One-off · outside monthly spend</>
+                      ) : (
+                        <>
+                          {KIND_LABEL[b.kind]} ·{" "}
+                          {categoryCountByBracket.get(b.id!) ?? 0} categor
+                          {(categoryCountByBracket.get(b.id!) ?? 0) === 1
+                            ? "y"
+                            : "ies"}
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -452,7 +459,22 @@ export default function Settings({
                 >
                   Income
                 </button>
+                <button
+                  className={
+                    "chip" + (newBracketKind === "one_off" ? " active" : "")
+                  }
+                  onClick={() => setNewBracketKind("one_off")}
+                >
+                  One-off
+                </button>
               </div>
+              {newBracketKind === "one_off" && (
+                <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+                  For big, irregular purchases — a phone, a bike. You add each
+                  one by name, with no categories, and it never counts toward
+                  your monthly spend.
+                </p>
+              )}
               <button className="btn" onClick={addBracket}>
                 Create bracket
               </button>
@@ -626,7 +648,10 @@ export default function Settings({
                 options={categories
                   .filter(
                     (c) =>
-                      !c.archived && !bracketById.get(c.bracketId)?.archived,
+                      !c.archived &&
+                      !bracketById.get(c.bracketId)?.archived &&
+                      // A one-off purchase is logged once, by name — never recurring.
+                      bracketById.get(c.bracketId)?.kind !== "one_off",
                   )
                   .map((c) => {
                     const bracket = bracketById.get(c.bracketId);

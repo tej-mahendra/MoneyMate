@@ -29,6 +29,10 @@ describe("mapNativeError", () => {
   ])("code %s → %s", (code, expected) => {
     expect(mapNativeError({ code })).toBe(expected);
   });
+  it("recognises a plugin whose native half was never built into the app", () => {
+    expect(mapNativeError({ code: "UNIMPLEMENTED" })).toBe("pluginMissing");
+    expect(mapNativeError(new Error('"NativeBiometric" plugin is not implemented on android'))).toBe("pluginMissing");
+  });
   it("accepts the code as a numeric string and survives junk", () => {
     expect(mapNativeError({ code: "16" })).toBe("cancelled");
     expect(mapNativeError(null)).toBe("failed");
@@ -51,6 +55,10 @@ describe("Android (native) auth", () => {
     expect((await nativeAuth.check()).reason).toBe("unavailable");
     isAvailable.mockRejectedValue(new Error("x"));
     expect((await nativeAuth.check()).reason).toBe("unavailable");
+  });
+  it("check: tells a missing plugin apart from a phone that can't verify", async () => {
+    isAvailable.mockRejectedValue(Object.assign(new Error("not implemented"), { code: "UNIMPLEMENTED" }));
+    expect(await nativeAuth.check()).toEqual({ available: false, reason: "pluginMissing" });
   });
 
   it("authenticate: uses the biometric prompt with a 'Use PIN' button when biometrics work", async () => {

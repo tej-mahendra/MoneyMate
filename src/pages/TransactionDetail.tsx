@@ -114,6 +114,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
 
   const isIncome = t.type === "income";
   const isSavings = !isIncome && bracket?.kind === "allocation";
+  const isOneOff = !isIncome && bracket?.kind === "one_off";
 
   return (
     <>
@@ -136,7 +137,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
           <div>
             <div className="eyebrow">Transaction</div>
             <h1 style={{ fontSize: 20 }}>
-              {isIncome ? "Income" : isSavings ? "Savings" : "Expense"} details
+              {isIncome ? "Income" : isSavings ? "Savings" : isOneOff ? "One-off" : "Expense"} details
             </h1>
           </div>
         </div>
@@ -169,7 +170,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
             {fmtMoney(t.amount, currency)}
           </div>
           <div className="detail-category">
-            {category?.name || "Uncategorized"}
+            {isOneOff && t.merchant ? t.merchant : category?.name || "Uncategorized"}
           </div>
         </div>
 
@@ -181,7 +182,7 @@ export default function TransactionDetail({ currency }: { currency: string }) {
           </div>
           {t.merchant && (
             <div className="detail-row">
-              <span className="detail-label">Merchant</span>
+              <span className="detail-label">{isOneOff ? "Item" : "Merchant"}</span>
               <span className="detail-value">{t.merchant}</span>
             </div>
           )}

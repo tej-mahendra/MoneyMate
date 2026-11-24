@@ -22,7 +22,8 @@ import {
 const KIND_ORDER: Record<BracketKind, number> = {
   spend: 0,
   allocation: 1,
-  income: 2,
+  one_off: 2,
+  income: 3,
 };
 
 /**
@@ -71,6 +72,7 @@ export default function Overview({
   const spendBrackets = brackets.filter((b) => b.kind === "spend");
   const allocationBrackets = brackets.filter((b) => b.kind === "allocation");
   const incomeBrackets = brackets.filter((b) => b.kind === "income");
+  const oneOffBrackets = brackets.filter((b) => b.kind === "one_off");
 
   const spendCapTotal = spendBrackets.reduce(
     (s, b) => s + bracketFigures(b).target,
@@ -85,6 +87,12 @@ export default function Overview({
     0,
   );
   const allocationActualTotal = allocationBrackets.reduce(
+    (s, b) => s + bracketFigures(b).actual,
+    0,
+  );
+  // Big irregular purchases: real money out this month, but no budget and
+  // never part of the monthly spend — only of what's actually left.
+  const oneOffActualTotal = oneOffBrackets.reduce(
     (s, b) => s + bracketFigures(b).actual,
     0,
   );
@@ -114,7 +122,7 @@ export default function Overview({
     ),
   );
   const allocationCategoryIds = new Set(
-    allocationBrackets.flatMap((b) =>
+    [...allocationBrackets, ...oneOffBrackets].flatMap((b) =>
       (catsByBracket.get(b.id!) ?? []).map((c) => c.id),
     ),
   );
@@ -191,11 +199,17 @@ export default function Overview({
   const trackIncome = totalIncome > 0;
   const unallocated = totalIncome - spendCapTotal - allocationTargetTotal;
   const actualLeftover =
-    totalIncome - spendActualTotal - allocationActualTotal - unbudgetedSpent;
+    totalIncome -
+    spendActualTotal -
+    allocationActualTotal -
+    oneOffActualTotal -
+    unbudgetedSpent;
 
   function bracketSubtitle(bracket: Bracket, target: number, actual: number) {
     if (bracket.kind === "income")
       return `${fmtMoney(actual, currency)} logged this month`;
+    if (bracket.kind === "one_off")
+      return `${fmtMoney(actual, currency)} this month · outside monthly spend`;
     if (target === 0)
       return `${fmtMoney(actual, currency)} spent, no target set`;
     const left = target - actual;

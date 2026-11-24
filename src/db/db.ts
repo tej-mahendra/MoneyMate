@@ -18,12 +18,16 @@ export type Frequency = "daily" | "weekly" | "monthly" | "yearly";
  *  - 'income'     — a source of money in (an "Income" bracket containing
  *                    Salary, Freelance…). `budget` is meaningless/ignored
  *                    for these.
+ *  - 'one_off'    — big, irregular purchases (a phone, a bike…). Real money
+ *                    out, so it reduces what's left over, but it is never
+ *                    part of the monthly spend, the budget cap or the
+ *                    run-rate analytics. Has no budget of its own.
  *
  * There are 4 defaults (Expenditure/Savings/Investments/Income) seeded on
  * first install, but the user can add more brackets of any kind — e.g. a
  * separate "EMI" or "Work Expenses" bracket alongside the defaults.
  */
-export type BracketKind = "spend" | "allocation" | "income";
+export type BracketKind = "spend" | "allocation" | "income" | "one_off";
 
 /** The top level of the hierarchy: Expenditure, Savings, Investments,
  *  Income, or any custom bracket the user adds. A bracket's own total is
