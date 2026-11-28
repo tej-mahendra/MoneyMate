@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { EMPTY_LIST } from "../lib/stable";
+import BalanceCard from "../components/BalanceCard";
 import { useNavigate } from "react-router-dom";
 import { db, type Bracket, type BracketKind } from "../db/db";
 import {
@@ -286,6 +287,8 @@ export default function Overview({
             </div>
           </div>
         )}
+
+        <BalanceCard currency={currency} monthlyIncome={monthlyIncome} />
 
         <div className="card owed-home-section">
           <div className="owed-header">

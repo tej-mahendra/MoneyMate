@@ -152,6 +152,13 @@ export interface Settings {
   lastBackupAt?: number;
   /** Hides the dashboard backup reminder until this time (ms). 0 = not snoozed. */
   backupNudgeSnoozedUntil?: number;
+  /** "Money in hand": the account balance the person last confirmed, the day
+   *  they confirmed it and when (ms). The running total is this plus whatever
+   *  was logged afterwards. Absent until set — the history alone can't say what
+   *  the account held before logging began. */
+  balanceAnchorAmount?: number;
+  balanceAnchorDate?: string;
+  balanceAnchorAt?: number;
 }
 
 class MoneyMateDatabase extends Dexie {

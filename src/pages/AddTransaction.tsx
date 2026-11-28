@@ -327,6 +327,14 @@ export default function AddTransaction() {
       showToast("Enter an amount greater than 0.");
       return;
     }
+    // Nothing in the app is "scheduled": a future-dated entry would count in
+    // this month's totals before it happened. Upcoming bills belong in
+    // Settings → Recurring. (Re-saving an old future-dated entry unchanged is
+    // still allowed, so it can't get stuck.)
+    if (date > todayISO() && !(editingTx && editingTx.date === date)) {
+      showToast("Future dates aren't allowed. Use a recurring entry for upcoming bills.");
+      return;
+    }
     const isOneOffEntry = kind === "oneoff";
     if (isOneOffEntry) {
       if (!merchant.trim()) {
@@ -745,6 +753,7 @@ export default function AddTransaction() {
           <input
             id="date"
             type="date"
+            max={todayISO()}
             value={date}
             onChange={(e) => setDate(e.target.value)}
             // Desktop browsers open the calendar only from the tiny icon;

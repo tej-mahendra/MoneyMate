@@ -742,6 +742,17 @@ function sanitizeSettings(raw: unknown[]): Settings[] {
       // Only an explicit `false` shows amounts; a backup that predates the
       // setting restores to the private default.
       hideWidgetAmounts: s.hideWidgetAmounts !== false,
+      // "Money in hand" anchor — all three or none, so a half-written one
+      // can't produce a total from a missing date.
+      ...(Number.isFinite(s.balanceAnchorAmount) &&
+      typeof s.balanceAnchorDate === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(s.balanceAnchorDate)
+        ? {
+            balanceAnchorAmount: s.balanceAnchorAmount as number,
+            balanceAnchorDate: s.balanceAnchorDate,
+            balanceAnchorAt: asFiniteNumber(s.balanceAnchorAt, 0),
+          }
+        : {}),
     };
   });
 }
